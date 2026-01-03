@@ -144,3 +144,50 @@ export interface CodexQuotaState {
   error?: string;
   errorStatus?: number;
 }
+
+// Kiro (Amazon Q Developer) 配额相关类型
+export interface KiroFreeTrialInfo {
+  currentUsageWithPrecision?: number | string;
+  usageLimitWithPrecision?: number | string;
+  freeTrialStatus?: string;
+  freeTrialExpiry?: number | string;
+}
+
+export interface KiroUsageBreakdown {
+  currentUsageWithPrecision?: number | string;
+  usageLimitWithPrecision?: number | string;
+  freeTrialInfo?: KiroFreeTrialInfo;
+}
+
+export interface KiroUsagePayload {
+  subscriptionInfo?: {
+    subscriptionTitle?: string;
+  };
+  userInfo?: {
+    email?: string;
+  };
+  usageBreakdownList?: KiroUsageBreakdown[];
+  daysUntilReset?: number;
+  nextDateReset?: number | string;
+}
+
+export interface KiroQuotaItem {
+  id: string;
+  label: string;
+  currentUsage: number | null;
+  usageLimit: number | null;
+  remainingAmount: number | null;
+  status?: string;
+  expiryTime?: string;
+  resetTime?: string;
+}
+
+export interface KiroQuotaState {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  email?: string | null;
+  subscriptionType?: string | null;
+  items: KiroQuotaItem[];
+  totalRemaining?: number | null;
+  error?: string;
+  errorStatus?: number;
+}

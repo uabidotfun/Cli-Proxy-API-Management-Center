@@ -151,3 +151,20 @@ export function parseGeminiCliQuotaPayload(payload: unknown): GeminiCliQuotaPayl
   }
   return null;
 }
+
+export function parseKiroUsagePayload(payload: unknown): any | null {
+  if (payload === undefined || payload === null) return null;
+  if (typeof payload === 'string') {
+    const trimmed = payload.trim();
+    if (!trimmed) return null;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof payload === 'object') {
+    return payload;
+  }
+  return null;
+}

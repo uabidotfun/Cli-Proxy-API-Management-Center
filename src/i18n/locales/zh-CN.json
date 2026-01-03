@@ -408,6 +408,22 @@
     "fetch_all": "获取全部",
     "remaining_amount": "剩余 {{count}}"
   },
+  "kiro_quota": {
+    "title": "Kiro (Amazon Q) 额度",
+    "empty_title": "暂无 Kiro 认证",
+    "empty_desc": "当 Kiro 配置文件存在时自动显示。",
+    "idle": "尚未加载额度。",
+    "loading": "可加载额度...",
+    "load_failed": "额度获取失败：{{message}}",
+    "missing_auth_index": "认证文件缺少 auth_index",
+    "empty_payload": "API 返回数据为空或格式错误",
+    "empty_items": "暂无配额项",
+    "refresh_button": "刷新额度",
+    "fetch_all": "获取全部",
+    "bonus_credits": "Bonus Credits (奖励积分)",
+    "plan_credits": "Plan Credits (计划积分)",
+    "remaining_label": "剩余: {{amount}}"
+  },
   "vertex_import": {
     "title": "Vertex JSON 登录",
     "description": "上传 Google 服务账号 JSON，使用 CLI vertex-import 同步规则写入 auth-dir/vertex-<project>.json。",

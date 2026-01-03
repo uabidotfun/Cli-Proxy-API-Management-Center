@@ -408,6 +408,22 @@
     "fetch_all": "Fetch All",
     "remaining_amount": "Remaining {{count}}"
   },
+  "kiro_quota": {
+    "title": "Kiro (Amazon Q) Quota",
+    "empty_title": "No Kiro Auth Files",
+    "empty_desc": "Automatically shown when Kiro config exists.",
+    "idle": "Quota not loaded.",
+    "loading": "Loading quota...",
+    "load_failed": "Failed to load quota: {{message}}",
+    "missing_auth_index": "Auth file missing auth_index",
+    "empty_payload": "API returned empty or invalid payload",
+    "empty_items": "No quota items available",
+    "refresh_button": "Refresh Quota",
+    "fetch_all": "Fetch All",
+    "bonus_credits": "Bonus Credits",
+    "plan_credits": "Plan Credits",
+    "remaining_label": "Remaining: {{amount}}"
+  },
   "vertex_import": {
     "title": "Vertex JSON Login",
     "description": "Upload a Google service account JSON to store it as auth-dir/vertex-<project>.json using the same rules as the CLI vertex-import helper.",

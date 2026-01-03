@@ -93,13 +93,19 @@ interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
   files: AuthFileItem[];
   loading: boolean;
   disabled: boolean;
+  /** 进入页面时自动获取全部配额 */
+  autoFetch?: boolean;
+  /** 禁用分页，显示所有卡片 */
+  disablePagination?: boolean;
 }
 
 export function QuotaSection<TState extends QuotaStatusState, TData>({
   config,
   files,
   loading,
-  disabled
+  disabled,
+  autoFetch = false,
+  disablePagination = false
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
@@ -153,6 +159,16 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     });
   }, [filteredFiles, loading, setQuota]);
 
+  // 自动获取全部配额（仅在 autoFetch 为 true 且文件加载完成后执行一次）
+  const [autoFetched, setAutoFetched] = useState(false);
+  useEffect(() => {
+    if (!autoFetch || loading || autoFetched || filteredFiles.length === 0 || disabled) {
+      return;
+    }
+    setAutoFetched(true);
+    loadQuota(filteredFiles, 'all', setLoading);
+  }, [autoFetch, loading, autoFetched, filteredFiles, disabled, loadQuota, setLoading]);
+
   return (
     <Card
       title={t(`${config.i18nPrefix}.title`)}
@@ -186,32 +202,34 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
         />
       ) : (
         <>
-          <div className={config.controlsClassName}>
-            <div className={config.controlClassName}>
-              <label>{t('auth_files.page_size_label')}</label>
-              <input
-                className={styles.pageSizeSelect}
-                type="number"
-                min={MIN_CARD_PAGE_SIZE}
-                max={MAX_CARD_PAGE_SIZE}
-                step={1}
-                value={pageSize}
-                onChange={(e) => {
-                  const value = e.currentTarget.valueAsNumber;
-                  if (!Number.isFinite(value)) return;
-                  setPageSize(value);
-                }}
-              />
-            </div>
-            <div className={config.controlClassName}>
-              <label>{t('common.info')}</label>
-              <div className={styles.statsInfo}>
-                {filteredFiles.length} {t('auth_files.files_count')}
+          {!disablePagination && (
+            <div className={config.controlsClassName}>
+              <div className={config.controlClassName}>
+                <label>{t('auth_files.page_size_label')}</label>
+                <input
+                  className={styles.pageSizeSelect}
+                  type="number"
+                  min={MIN_CARD_PAGE_SIZE}
+                  max={MAX_CARD_PAGE_SIZE}
+                  step={1}
+                  value={pageSize}
+                  onChange={(e) => {
+                    const value = e.currentTarget.valueAsNumber;
+                    if (!Number.isFinite(value)) return;
+                    setPageSize(value);
+                  }}
+                />
+              </div>
+              <div className={config.controlClassName}>
+                <label>{t('common.info')}</label>
+                <div className={styles.statsInfo}>
+                  {filteredFiles.length} {t('auth_files.files_count')}
+                </div>
               </div>
             </div>
-          </div>
+          )}
           <div className={config.gridClassName}>
-            {pageItems.map((item) => (
+            {(disablePagination ? filteredFiles : pageItems).map((item) => (
               <QuotaCard
                 key={item.name}
                 item={item}
@@ -224,7 +242,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
               />
             ))}
           </div>
-          {filteredFiles.length > pageSize && (
+          {!disablePagination && filteredFiles.length > pageSize && (
             <div className={styles.pagination}>
               <Button
                 variant="secondary"
