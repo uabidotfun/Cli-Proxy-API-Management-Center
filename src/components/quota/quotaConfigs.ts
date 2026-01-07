@@ -649,9 +649,14 @@ const renderKiroItems = (
   t: TFunction,
   helpers: QuotaRenderHelpers
 ): ReactNode => {
-  const { styles: styleMap, QuotaProgressBar } = helpers;
+  const { styles: styleMap } = helpers;
   const { createElement: h } = React;
-  const items = quota.items ?? [];
+  const rawItems = quota.items ?? [];
+
+  // 过滤掉已过期的积分项（status 为 EXPIRED）
+  const items = rawItems.filter(
+    (item) => !item.status || item.status.toUpperCase() !== 'EXPIRED'
+  );
 
   if (items.length === 0) {
     return h('div', { className: styleMap.quotaMessage }, t('kiro_quota.empty_items'));
@@ -678,9 +683,9 @@ const renderKiroItems = (
         : null;
 
     const resetLabel = formatQuotaResetTime(item.resetTime);
-    
-    // 如果有 status（如 ACTIVE），显示在标题旁
-    const title = item.status ? `${item.label} (${item.status})` : item.label;
+
+    // 简化显示：不再显示状态标签
+    const title = item.label;
 
     return h(
       'div',
@@ -696,8 +701,8 @@ const renderKiroItems = (
           remainingLabel ? h('span', { className: styleMap.quotaAmount }, remainingLabel) : null,
           h('span', { className: styleMap.quotaReset }, resetLabel)
         )
-      ),
-      h(QuotaProgressBar, { percent, highThreshold: 50, mediumThreshold: 20 })
+      )
+      // 移除进度条，简化显示
     );
   });
 };
