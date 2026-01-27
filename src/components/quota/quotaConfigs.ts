@@ -487,12 +487,6 @@ const renderGeminiCliItems = (
     const clamped = fraction === null ? null : Math.max(0, Math.min(1, fraction));
     const percent = clamped === null ? null : Math.round(clamped * 100);
     const percentLabel = percent === null ? '--' : `${percent}%`;
-    const remainingAmountLabel =
-      bucket.remainingAmount === null || bucket.remainingAmount === undefined
-        ? null
-        : t('gemini_cli_quota.remaining_amount', {
-            count: bucket.remainingAmount
-          });
     const titleBase =
       bucket.modelIds && bucket.modelIds.length > 0 ? bucket.modelIds.join(', ') : bucket.label;
     const title = bucket.tokenType ? `${titleBase} (${bucket.tokenType})` : titleBase;
