@@ -14,7 +14,6 @@ import { QuotaCard } from './QuotaCard';
 import type { QuotaStatusState } from './QuotaCard';
 import { useQuotaLoader } from './useQuotaLoader';
 import type { QuotaConfig } from './quotaConfigs';
-import { useGridColumns } from './useGridColumns';
 import { IconRefreshCw } from '@/components/ui/icons';
 import styles from '@/pages/QuotaPage.module.scss';
 
@@ -109,8 +108,6 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     Record<string, TState>
   >;
 
-  /* Removed useRef */
-  const [columns, gridRef] = useGridColumns(380); // Min card width 380px matches SCSS
   const [viewMode, setViewMode] = useState<ViewMode>('paged');
   const [showTooManyWarning, setShowTooManyWarning] = useState(false);
 
@@ -149,15 +146,14 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     };
   }, [showAllAllowed, viewMode]);
 
-  // Update page size based on view mode and columns
+  // 列表布局下使用固定的分页大小
   useEffect(() => {
     if (effectiveViewMode === 'all') {
       setPageSize(Math.max(1, filteredFiles.length));
     } else {
-      // Paged mode: 3 rows * columns, capped to avoid oversized pages.
-      setPageSize(Math.min(columns * 3, MAX_ITEMS_PER_PAGE));
+      setPageSize(MAX_ITEMS_PER_PAGE);
     }
-  }, [effectiveViewMode, columns, filteredFiles.length, setPageSize]);
+  }, [effectiveViewMode, filteredFiles.length, setPageSize]);
 
   const { quota, loadQuota } = useQuotaLoader(config);
 
@@ -263,7 +259,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
         />
       ) : (
         <>
-          <div ref={gridRef} className={config.gridClassName}>
+          <div className={config.gridClassName}>
             {pageItems.map((item) => (
               <QuotaCard
                 key={item.name}

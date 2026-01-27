@@ -38,7 +38,7 @@ import {
   resolveCodexPlanType,
   resolveGeminiCliProjectId,
   formatCodexResetLabel,
-  formatQuotaResetTime,
+  formatCountdown,
   buildAntigravityQuotaGroups,
   buildGeminiCliQuotaBuckets,
   createStatusError,
@@ -371,27 +371,20 @@ const renderAntigravityItems = (
   return groups.map((group) => {
     const clamped = Math.max(0, Math.min(1, group.remainingFraction));
     const percent = Math.round(clamped * 100);
-    const resetLabel = formatQuotaResetTime(group.resetTime);
+    const resetLabel = formatCountdown(group.resetTime);
 
+    // 紧凑的 pill 样式：模型名 | 进度条 | 百分比·倒计时
     return h(
       'div',
-      { key: group.id, className: styleMap.quotaRow },
+      { key: group.id, className: styleMap.quotaRow, title: group.models.join(', ') },
+      h('span', { className: styleMap.quotaModel }, group.label),
+      h(QuotaProgressBar, { percent, highThreshold: 60, mediumThreshold: 20 }),
       h(
         'div',
-        { className: styleMap.quotaRowHeader },
-        h(
-          'span',
-          { className: styleMap.quotaModel, title: group.models.join(', ') },
-          group.label
-        ),
-        h(
-          'div',
-          { className: styleMap.quotaMeta },
-          h('span', { className: styleMap.quotaPercent }, `${percent}%`),
-          h('span', { className: styleMap.quotaReset }, resetLabel)
-        )
-      ),
-      h(QuotaProgressBar, { percent, highThreshold: 60, mediumThreshold: 20 })
+        { className: styleMap.quotaMeta },
+        h('span', { className: styleMap.quotaPercent }, `${percent}%`),
+        resetLabel !== '-' ? h('span', { className: styleMap.quotaReset }, resetLabel) : null
+      )
     );
   });
 };
@@ -455,22 +448,20 @@ const renderCodexItems = (
       const remaining = clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
       const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
       const windowLabel = window.labelKey ? t(window.labelKey) : window.label;
+      const resetLabel = window.resetLabel;
 
+      // 紧凑的 pill 样式
       return h(
         'div',
         { key: window.id, className: styleMap.quotaRow },
+        h('span', { className: styleMap.quotaModel }, windowLabel),
+        h(QuotaProgressBar, { percent: remaining, highThreshold: 80, mediumThreshold: 50 }),
         h(
           'div',
-          { className: styleMap.quotaRowHeader },
-          h('span', { className: styleMap.quotaModel }, windowLabel),
-          h(
-            'div',
-            { className: styleMap.quotaMeta },
-            h('span', { className: styleMap.quotaPercent }, percentLabel),
-            h('span', { className: styleMap.quotaReset }, window.resetLabel)
-          )
-        ),
-        h(QuotaProgressBar, { percent: remaining, highThreshold: 80, mediumThreshold: 50 })
+          { className: styleMap.quotaMeta },
+          h('span', { className: styleMap.quotaPercent }, percentLabel),
+          resetLabel && resetLabel !== '-' ? h('span', { className: styleMap.quotaReset }, resetLabel) : null
+        )
       );
     })
   );
@@ -506,26 +497,20 @@ const renderGeminiCliItems = (
       bucket.modelIds && bucket.modelIds.length > 0 ? bucket.modelIds.join(', ') : bucket.label;
     const title = bucket.tokenType ? `${titleBase} (${bucket.tokenType})` : titleBase;
 
-    const resetLabel = formatQuotaResetTime(bucket.resetTime);
+    const resetLabel = formatCountdown(bucket.resetTime);
 
+    // 紧凑的 pill 样式
     return h(
       'div',
-      { key: bucket.id, className: styleMap.quotaRow },
+      { key: bucket.id, className: styleMap.quotaRow, title },
+      h('span', { className: styleMap.quotaModel }, bucket.label),
+      h(QuotaProgressBar, { percent, highThreshold: 60, mediumThreshold: 20 }),
       h(
         'div',
-        { className: styleMap.quotaRowHeader },
-        h('span', { className: styleMap.quotaModel, title }, bucket.label),
-        h(
-          'div',
-          { className: styleMap.quotaMeta },
-          h('span', { className: styleMap.quotaPercent }, percentLabel),
-          remainingAmountLabel
-            ? h('span', { className: styleMap.quotaAmount }, remainingAmountLabel)
-            : null,
-          h('span', { className: styleMap.quotaReset }, resetLabel)
-        )
-      ),
-      h(QuotaProgressBar, { percent, highThreshold: 60, mediumThreshold: 20 })
+        { className: styleMap.quotaMeta },
+        h('span', { className: styleMap.quotaPercent }, percentLabel),
+        resetLabel !== '-' ? h('span', { className: styleMap.quotaReset }, resetLabel) : null
+      )
     );
   });
 };
