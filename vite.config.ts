@@ -62,6 +62,14 @@ export default defineConfig({
       }
     }
   },
+  server: {
+    proxy: {
+      '/v0': {
+        target: 'http://localhost:8045',
+        changeOrigin: true
+      }
+    }
+  },
   build: {
     target: 'es2015',
     outDir: 'dist',
@@ -74,5 +82,6 @@ export default defineConfig({
         manualChunks: undefined
       }
     }
-  }
+  },
+  
 });
