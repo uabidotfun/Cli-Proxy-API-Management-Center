@@ -62,6 +62,14 @@ export default defineConfig({
       }
     }
   },
+  server: {
+    proxy: {
+      '/v0': {
+        target: 'http://127.0.0.1:8045',
+        changeOrigin: true
+      }
+    }
+  },
   build: {
     target: 'es2015',
     outDir: 'dist',
