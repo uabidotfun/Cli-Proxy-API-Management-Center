@@ -76,37 +76,6 @@ export const ANTIGRAVITY_QUOTA_GROUPS: AntigravityQuotaGroupDefinition[] = [
       'gpt-oss-120b-medium',
     ],
   },
-  {
-    id: 'gemini-3-pro',
-    label: 'Gemini 3 Pro',
-    identifiers: ['gemini-3-pro-high', 'gemini-3-pro-low'],
-  },
-  {
-    id: 'gemini-2-5-flash',
-    label: 'Gemini 2.5 Flash',
-    identifiers: ['gemini-2.5-flash', 'gemini-2.5-flash-thinking'],
-  },
-  {
-    id: 'gemini-2-5-flash-lite',
-    label: 'Gemini 2.5 Flash Lite',
-    identifiers: ['gemini-2.5-flash-lite'],
-  },
-  {
-    id: 'gemini-2-5-cu',
-    label: 'Gemini 2.5 CU',
-    identifiers: ['rev19-uic3-1p'],
-  },
-  {
-    id: 'gemini-3-flash',
-    label: 'Gemini 3 Flash',
-    identifiers: ['gemini-3-flash'],
-  },
-  {
-    id: 'gemini-image',
-    label: 'gemini-3-pro-image',
-    identifiers: ['gemini-3-pro-image'],
-    labelFromModel: true,
-  },
 ];
 
 // Gemini CLI API configuration

@@ -18,6 +18,7 @@ import {
   IconChevronUp,
   IconDownload,
   IconInfo,
+  IconRefreshCw,
   IconTrash2,
 } from '@/components/ui/icons';
 import type { TFunction } from 'i18next';
@@ -1661,6 +1662,18 @@ export function AuthFilesPage() {
             {showQuotaLayout && quotaType && renderQuotaSection(item, quotaType)}
 
             <div className={styles.cardActions}>
+              {showQuotaLayout && quotaType && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void refreshQuotaForFile(item, quotaType)}
+                  className={styles.iconButton}
+                  title={t('auth_files.quota_refresh_button', { defaultValue: '刷新额度' })}
+                  disabled={disableControls || item.disabled}
+                >
+                  <IconRefreshCw className={styles.actionIcon} size={16} />
+                </Button>
+              )}
               {showModelsButton && (
                 <Button
                   variant="secondary"

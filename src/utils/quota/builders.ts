@@ -179,9 +179,6 @@ export function buildAntigravityQuotaGroups(
   models: AntigravityModelsPayload
 ): AntigravityQuotaGroup[] {
   const groups: AntigravityQuotaGroup[] = [];
-  let geminiProResetTime: string | undefined;
-  const [claudeDef, geminiProDef, flashDef, flashLiteDef, cuDef, geminiFlashDef, imageDef] =
-    ANTIGRAVITY_QUOTA_GROUPS;
 
   const buildGroup = (
     def: AntigravityQuotaGroupDefinition,
@@ -222,40 +219,11 @@ export function buildAntigravityQuotaGroups(
     };
   };
 
-  const claudeGroup = buildGroup(claudeDef);
-  if (claudeGroup) {
-    groups.push(claudeGroup);
-  }
-
-  const geminiProGroup = buildGroup(geminiProDef);
-  if (geminiProGroup) {
-    geminiProResetTime = geminiProGroup.resetTime;
-    groups.push(geminiProGroup);
-  }
-
-  const flashGroup = buildGroup(flashDef);
-  if (flashGroup) {
-    groups.push(flashGroup);
-  }
-
-  const flashLiteGroup = buildGroup(flashLiteDef);
-  if (flashLiteGroup) {
-    groups.push(flashLiteGroup);
-  }
-
-  const cuGroup = buildGroup(cuDef);
-  if (cuGroup) {
-    groups.push(cuGroup);
-  }
-
-  const geminiFlashGroup = buildGroup(geminiFlashDef);
-  if (geminiFlashGroup) {
-    groups.push(geminiFlashGroup);
-  }
-
-  const imageGroup = buildGroup(imageDef, geminiProResetTime);
-  if (imageGroup) {
-    groups.push(imageGroup);
+  for (const def of ANTIGRAVITY_QUOTA_GROUPS) {
+    const group = buildGroup(def);
+    if (group) {
+      groups.push(group);
+    }
   }
 
   return groups;
