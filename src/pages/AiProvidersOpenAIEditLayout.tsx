@@ -10,6 +10,7 @@ import type { ModelInfo } from '@/utils/models';
 import { buildHeaderObject, headersToEntries } from '@/utils/headers';
 import { buildApiKeyEntry } from '@/components/providers/utils';
 import type { ModelEntry, OpenAIFormState } from '@/components/providers/types';
+import type { KeyTestStatus } from '@/stores/useOpenAIEditDraftStore';
 
 type LocationState = { fromAiProviders?: boolean } | null;
 
@@ -29,6 +30,9 @@ export type OpenAIEditOutletContext = {
   setTestStatus: Dispatch<SetStateAction<'idle' | 'loading' | 'success' | 'error'>>;
   testMessage: string;
   setTestMessage: Dispatch<SetStateAction<string>>;
+  keyTestStatuses: KeyTestStatus[];
+  setDraftKeyTestStatus: (keyIndex: number, status: KeyTestStatus) => void;
+  resetDraftKeyTestStatuses: (count: number) => void;
   availableModels: string[];
   handleBack: () => void;
   handleSave: () => Promise<void>;
@@ -73,8 +77,6 @@ export function AiProvidersOpenAIEditLayout() {
 
   const config = useConfigStore((state) => state.config);
   const fetchConfig = useConfigStore((state) => state.fetchConfig);
-  const updateConfigValue = useConfigStore((state) => state.updateConfigValue);
-  const clearCache = useConfigStore((state) => state.clearCache);
   const isCacheValid = useConfigStore((state) => state.isCacheValid);
 
   const [providers, setProviders] = useState<OpenAIProviderConfig[]>(
@@ -99,11 +101,14 @@ export function AiProvidersOpenAIEditLayout() {
   const setDraftTestModel = useOpenAIEditDraftStore((state) => state.setDraftTestModel);
   const setDraftTestStatus = useOpenAIEditDraftStore((state) => state.setDraftTestStatus);
   const setDraftTestMessage = useOpenAIEditDraftStore((state) => state.setDraftTestMessage);
+  const setDraftKeyTestStatus = useOpenAIEditDraftStore((state) => state.setDraftKeyTestStatus);
+  const resetDraftKeyTestStatuses = useOpenAIEditDraftStore((state) => state.resetDraftKeyTestStatuses);
 
   const form = draft?.form ?? buildEmptyForm();
   const testModel = draft?.testModel ?? '';
   const testStatus = draft?.testStatus ?? 'idle';
   const testMessage = draft?.testMessage ?? '';
+  const keyTestStatuses = draft?.keyTestStatuses ?? [];
 
   const setForm: Dispatch<SetStateAction<OpenAIFormState>> = useCallback(
     (action) => {
@@ -132,6 +137,20 @@ export function AiProvidersOpenAIEditLayout() {
       setDraftTestMessage(draftKey, action);
     },
     [draftKey, setDraftTestMessage]
+  );
+
+  const handleSetDraftKeyTestStatus = useCallback(
+    (keyIndex: number, status: KeyTestStatus) => {
+      setDraftKeyTestStatus(draftKey, keyIndex, status);
+    },
+    [draftKey, setDraftKeyTestStatus]
+  );
+
+  const handleResetDraftKeyTestStatuses = useCallback(
+    (count: number) => {
+      resetDraftKeyTestStatuses(draftKey, count);
+    },
+    [draftKey, resetDraftKeyTestStatuses]
   );
 
   const initialData = useMemo(() => {
@@ -215,6 +234,7 @@ export function AiProvidersOpenAIEditLayout() {
         testModel: initialTestModel,
         testStatus: 'idle',
         testMessage: '',
+        keyTestStatuses: [],
       });
     } else {
       initDraft(draftKey, {
@@ -222,6 +242,7 @@ export function AiProvidersOpenAIEditLayout() {
         testModel: '',
         testStatus: 'idle',
         testMessage: '',
+        keyTestStatuses: [],
       });
     }
   }, [draft?.initialized, draftKey, initDraft, initialData, loading]);
@@ -312,9 +333,18 @@ export function AiProvidersOpenAIEditLayout() {
           : [...providers, payload];
 
       await providersApi.saveOpenAIProviders(nextList);
-      setProviders(nextList);
-      updateConfigValue('openai-compatibility', nextList);
-      clearCache('openai-compatibility');
+
+      let syncedProviders = nextList;
+      try {
+        const latest = await fetchConfig('openai-compatibility', true);
+        if (Array.isArray(latest)) {
+          syncedProviders = latest as OpenAIProviderConfig[];
+        }
+      } catch {
+        // 保存成功后刷新失败时，回退到本地计算结果，避免页面数据为空或回退
+      }
+
+      setProviders(syncedProviders);
       showNotification(
         editIndex !== null
           ? t('notification.openai_provider_updated')
@@ -328,15 +358,14 @@ export function AiProvidersOpenAIEditLayout() {
       setSaving(false);
     }
   }, [
-    clearCache,
     editIndex,
+    fetchConfig,
     form,
     handleBack,
     providers,
     testModel,
     showNotification,
     t,
-    updateConfigValue,
   ]);
 
   const resolvedLoading = !draft?.initialized;
@@ -359,6 +388,9 @@ export function AiProvidersOpenAIEditLayout() {
         setTestStatus,
         testMessage,
         setTestMessage,
+        keyTestStatuses,
+        setDraftKeyTestStatus: handleSetDraftKeyTestStatus,
+        resetDraftKeyTestStatuses: handleResetDraftKeyTestStatuses,
         availableModels,
         handleBack,
         handleSave,

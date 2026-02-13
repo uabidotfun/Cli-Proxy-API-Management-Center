@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { isMap, parse as parseYaml, parseDocument } from 'yaml';
 import type {
   PayloadFilterRule,
   PayloadParamValueType,
@@ -7,10 +7,6 @@ import type {
   VisualConfigValues,
 } from '@/types/visualConfig';
 import { DEFAULT_VISUAL_VALUES } from '@/types/visualConfig';
-
-function hasOwn(obj: unknown, key: string): obj is Record<string, unknown> {
-  return obj !== null && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, key);
-}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -48,53 +44,58 @@ function parseApiKeysText(raw: unknown): string {
   return keys.join('\n');
 }
 
-function ensureRecord(parent: Record<string, unknown>, key: string): Record<string, unknown> {
-  const existing = asRecord(parent[key]);
-  if (existing) return existing;
-  const next: Record<string, unknown> = {};
-  parent[key] = next;
-  return next;
+type YamlDocument = ReturnType<typeof parseDocument>;
+type YamlPath = string[];
+
+function docHas(doc: YamlDocument, path: YamlPath): boolean {
+  return doc.hasIn(path);
 }
 
-function deleteIfEmpty(parent: Record<string, unknown>, key: string): void {
-  const value = asRecord(parent[key]);
-  if (!value) return;
-  if (Object.keys(value).length === 0) delete parent[key];
+function ensureMapInDoc(doc: YamlDocument, path: YamlPath): void {
+  const existing = doc.getIn(path, true);
+  if (isMap(existing)) return;
+  doc.setIn(path, {});
 }
 
-function setBoolean(obj: Record<string, unknown>, key: string, value: boolean): void {
+function deleteIfMapEmpty(doc: YamlDocument, path: YamlPath): void {
+  const value = doc.getIn(path, true);
+  if (!isMap(value)) return;
+  if (value.items.length === 0) doc.deleteIn(path);
+}
+
+function setBooleanInDoc(doc: YamlDocument, path: YamlPath, value: boolean): void {
   if (value) {
-    obj[key] = true;
+    doc.setIn(path, true);
     return;
   }
-  if (hasOwn(obj, key)) obj[key] = false;
+  if (docHas(doc, path)) doc.setIn(path, false);
 }
 
-function setString(obj: Record<string, unknown>, key: string, value: unknown): void {
+function setStringInDoc(doc: YamlDocument, path: YamlPath, value: unknown): void {
   const safe = typeof value === 'string' ? value : '';
   const trimmed = safe.trim();
   if (trimmed !== '') {
-    obj[key] = safe;
+    doc.setIn(path, safe);
     return;
   }
-  if (hasOwn(obj, key)) delete obj[key];
+  if (docHas(doc, path)) doc.deleteIn(path);
 }
 
-function setIntFromString(obj: Record<string, unknown>, key: string, value: unknown): void {
+function setIntFromStringInDoc(doc: YamlDocument, path: YamlPath, value: unknown): void {
   const safe = typeof value === 'string' ? value : '';
   const trimmed = safe.trim();
   if (trimmed === '') {
-    if (hasOwn(obj, key)) delete obj[key];
+    if (docHas(doc, path)) doc.deleteIn(path);
     return;
   }
 
   const parsed = Number.parseInt(trimmed, 10);
   if (Number.isFinite(parsed)) {
-    obj[key] = parsed;
+    doc.setIn(path, parsed);
     return;
   }
 
-  if (hasOwn(obj, key)) delete obj[key];
+  if (docHas(doc, path)) doc.deleteIn(path);
 }
 
 function deepClone<T>(value: T): T {
@@ -351,78 +352,95 @@ export function useVisualConfig() {
   const applyVisualChangesToYaml = useCallback(
     (currentYaml: string): string => {
       try {
-        const parsed = (parseYaml(currentYaml) || {}) as Record<string, unknown>;
+        const doc = parseDocument(currentYaml);
+        if (doc.errors.length > 0) return currentYaml;
+        if (!isMap(doc.contents)) {
+          doc.contents = doc.createNode({}) as unknown as typeof doc.contents;
+        }
         const values = visualValues;
 
-        setString(parsed, 'host', values.host);
-        setIntFromString(parsed, 'port', values.port);
+        setStringInDoc(doc, ['host'], values.host);
+        setIntFromStringInDoc(doc, ['port'], values.port);
 
         if (
-          hasOwn(parsed, 'tls') ||
+          docHas(doc, ['tls']) ||
           values.tlsEnable ||
           values.tlsCert.trim() ||
           values.tlsKey.trim()
         ) {
-          const tls = ensureRecord(parsed, 'tls');
-          setBoolean(tls, 'enable', values.tlsEnable);
-          setString(tls, 'cert', values.tlsCert);
-          setString(tls, 'key', values.tlsKey);
-          deleteIfEmpty(parsed, 'tls');
+          ensureMapInDoc(doc, ['tls']);
+          setBooleanInDoc(doc, ['tls', 'enable'], values.tlsEnable);
+          setStringInDoc(doc, ['tls', 'cert'], values.tlsCert);
+          setStringInDoc(doc, ['tls', 'key'], values.tlsKey);
+          deleteIfMapEmpty(doc, ['tls']);
         }
 
         if (
-          hasOwn(parsed, 'remote-management') ||
+          docHas(doc, ['remote-management']) ||
           values.rmAllowRemote ||
           values.rmSecretKey.trim() ||
           values.rmDisableControlPanel ||
           values.rmPanelRepo.trim()
         ) {
-          const rm = ensureRecord(parsed, 'remote-management');
-          setBoolean(rm, 'allow-remote', values.rmAllowRemote);
-          setString(rm, 'secret-key', values.rmSecretKey);
-          setBoolean(rm, 'disable-control-panel', values.rmDisableControlPanel);
-          setString(rm, 'panel-github-repository', values.rmPanelRepo);
-          if (hasOwn(rm, 'panel-repo')) delete rm['panel-repo'];
-          deleteIfEmpty(parsed, 'remote-management');
+          ensureMapInDoc(doc, ['remote-management']);
+          setBooleanInDoc(doc, ['remote-management', 'allow-remote'], values.rmAllowRemote);
+          setStringInDoc(doc, ['remote-management', 'secret-key'], values.rmSecretKey);
+          setBooleanInDoc(
+            doc,
+            ['remote-management', 'disable-control-panel'],
+            values.rmDisableControlPanel
+          );
+          setStringInDoc(doc, ['remote-management', 'panel-github-repository'], values.rmPanelRepo);
+          if (docHas(doc, ['remote-management', 'panel-repo'])) {
+            doc.deleteIn(['remote-management', 'panel-repo']);
+          }
+          deleteIfMapEmpty(doc, ['remote-management']);
         }
 
-        setString(parsed, 'auth-dir', values.authDir);
+        setStringInDoc(doc, ['auth-dir'], values.authDir);
         if (values.apiKeysText !== baselineValues.apiKeysText) {
           const apiKeys = values.apiKeysText
             .split('\n')
             .map((key) => key.trim())
             .filter(Boolean);
           if (apiKeys.length > 0) {
-            parsed['api-keys'] = apiKeys;
-          } else if (hasOwn(parsed, 'api-keys')) {
-            delete parsed['api-keys'];
+            doc.setIn(['api-keys'], apiKeys);
+          } else if (docHas(doc, ['api-keys'])) {
+            doc.deleteIn(['api-keys']);
           }
         }
 
-        setBoolean(parsed, 'debug', values.debug);
+        setBooleanInDoc(doc, ['debug'], values.debug);
 
-        setBoolean(parsed, 'commercial-mode', values.commercialMode);
-        setBoolean(parsed, 'logging-to-file', values.loggingToFile);
-        setIntFromString(parsed, 'logs-max-total-size-mb', values.logsMaxTotalSizeMb);
-        setBoolean(parsed, 'usage-statistics-enabled', values.usageStatisticsEnabled);
+        setBooleanInDoc(doc, ['commercial-mode'], values.commercialMode);
+        setBooleanInDoc(doc, ['logging-to-file'], values.loggingToFile);
+        setIntFromStringInDoc(doc, ['logs-max-total-size-mb'], values.logsMaxTotalSizeMb);
+        setBooleanInDoc(doc, ['usage-statistics-enabled'], values.usageStatisticsEnabled);
 
-        setString(parsed, 'proxy-url', values.proxyUrl);
-        setBoolean(parsed, 'force-model-prefix', values.forceModelPrefix);
-        setIntFromString(parsed, 'request-retry', values.requestRetry);
-        setIntFromString(parsed, 'max-retry-interval', values.maxRetryInterval);
-        setBoolean(parsed, 'ws-auth', values.wsAuth);
+        setStringInDoc(doc, ['proxy-url'], values.proxyUrl);
+        setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);
+        setIntFromStringInDoc(doc, ['request-retry'], values.requestRetry);
+        setIntFromStringInDoc(doc, ['max-retry-interval'], values.maxRetryInterval);
+        setBooleanInDoc(doc, ['ws-auth'], values.wsAuth);
 
-        if (hasOwn(parsed, 'quota-exceeded') || !values.quotaSwitchProject || !values.quotaSwitchPreviewModel) {
-          const quota = ensureRecord(parsed, 'quota-exceeded');
-          quota['switch-project'] = values.quotaSwitchProject;
-          quota['switch-preview-model'] = values.quotaSwitchPreviewModel;
-          deleteIfEmpty(parsed, 'quota-exceeded');
+        if (
+          docHas(doc, ['quota-exceeded']) ||
+          !values.quotaSwitchProject ||
+          !values.quotaSwitchPreviewModel
+        ) {
+          ensureMapInDoc(doc, ['quota-exceeded']);
+          doc.setIn(['quota-exceeded', 'switch-project'], values.quotaSwitchProject);
+          doc.setIn(
+            ['quota-exceeded', 'switch-preview-model'],
+            values.quotaSwitchPreviewModel
+          );
+          deleteIfMapEmpty(doc, ['quota-exceeded']);
         }
 
-        if (hasOwn(parsed, 'routing') || values.routingStrategy !== 'round-robin') {
-          const routing = ensureRecord(parsed, 'routing');
-          routing.strategy = values.routingStrategy;
-          deleteIfEmpty(parsed, 'routing');
+        if (docHas(doc, ['routing']) || values.routingStrategy !== 'round-robin') {
+          ensureMapInDoc(doc, ['routing']);
+          doc.setIn(['routing', 'strategy'], values.routingStrategy);
+          deleteIfMapEmpty(doc, ['routing']);
         }
 
         const keepaliveSeconds =
@@ -435,42 +453,55 @@ export function useVisualConfig() {
             : '';
 
         const streamingDefined =
-          hasOwn(parsed, 'streaming') || keepaliveSeconds.trim() || bootstrapRetries.trim();
+          docHas(doc, ['streaming']) || keepaliveSeconds.trim() || bootstrapRetries.trim();
         if (streamingDefined) {
-          const streaming = ensureRecord(parsed, 'streaming');
-          setIntFromString(streaming, 'keepalive-seconds', keepaliveSeconds);
-          setIntFromString(streaming, 'bootstrap-retries', bootstrapRetries);
-          deleteIfEmpty(parsed, 'streaming');
+          ensureMapInDoc(doc, ['streaming']);
+          setIntFromStringInDoc(doc, ['streaming', 'keepalive-seconds'], keepaliveSeconds);
+          setIntFromStringInDoc(doc, ['streaming', 'bootstrap-retries'], bootstrapRetries);
+          deleteIfMapEmpty(doc, ['streaming']);
         }
 
-        setIntFromString(parsed, 'nonstream-keepalive-interval', nonstreamKeepaliveInterval);
+        setIntFromStringInDoc(
+          doc,
+          ['nonstream-keepalive-interval'],
+          nonstreamKeepaliveInterval
+        );
 
         if (
-          hasOwn(parsed, 'payload') ||
+          docHas(doc, ['payload']) ||
           values.payloadDefaultRules.length > 0 ||
           values.payloadOverrideRules.length > 0 ||
           values.payloadFilterRules.length > 0
         ) {
-          const payload = ensureRecord(parsed, 'payload');
+          ensureMapInDoc(doc, ['payload']);
           if (values.payloadDefaultRules.length > 0) {
-            payload.default = serializePayloadRulesForYaml(values.payloadDefaultRules);
-          } else if (hasOwn(payload, 'default')) {
-            delete payload.default;
+            doc.setIn(
+              ['payload', 'default'],
+              serializePayloadRulesForYaml(values.payloadDefaultRules)
+            );
+          } else if (docHas(doc, ['payload', 'default'])) {
+            doc.deleteIn(['payload', 'default']);
           }
           if (values.payloadOverrideRules.length > 0) {
-            payload.override = serializePayloadRulesForYaml(values.payloadOverrideRules);
-          } else if (hasOwn(payload, 'override')) {
-            delete payload.override;
+            doc.setIn(
+              ['payload', 'override'],
+              serializePayloadRulesForYaml(values.payloadOverrideRules)
+            );
+          } else if (docHas(doc, ['payload', 'override'])) {
+            doc.deleteIn(['payload', 'override']);
           }
           if (values.payloadFilterRules.length > 0) {
-            payload.filter = serializePayloadFilterRulesForYaml(values.payloadFilterRules);
-          } else if (hasOwn(payload, 'filter')) {
-            delete payload.filter;
+            doc.setIn(
+              ['payload', 'filter'],
+              serializePayloadFilterRulesForYaml(values.payloadFilterRules)
+            );
+          } else if (docHas(doc, ['payload', 'filter'])) {
+            doc.deleteIn(['payload', 'filter']);
           }
-          deleteIfEmpty(parsed, 'payload');
+          deleteIfMapEmpty(doc, ['payload']);
         }
 
-        return stringifyYaml(parsed, { indent: 2, lineWidth: 120, minContentWidth: 0 });
+        return doc.toString({ indent: 2, lineWidth: 120, minContentWidth: 0 });
       } catch {
         return currentYaml;
       }
@@ -498,18 +529,66 @@ export function useVisualConfig() {
 }
 
 export const VISUAL_CONFIG_PROTOCOL_OPTIONS = [
-  { value: '', label: '默认' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'openai-response', label: 'OpenAI Response' },
-  { value: 'gemini', label: 'Gemini' },
-  { value: 'claude', label: 'Claude' },
-  { value: 'codex', label: 'Codex' },
-  { value: 'antigravity', label: 'Antigravity' },
+  {
+    value: '',
+    labelKey: 'config_management.visual.payload_rules.provider_default',
+    defaultLabel: 'Default',
+  },
+  {
+    value: 'openai',
+    labelKey: 'config_management.visual.payload_rules.provider_openai',
+    defaultLabel: 'OpenAI',
+  },
+  {
+    value: 'openai-response',
+    labelKey: 'config_management.visual.payload_rules.provider_openai_response',
+    defaultLabel: 'OpenAI Response',
+  },
+  {
+    value: 'gemini',
+    labelKey: 'config_management.visual.payload_rules.provider_gemini',
+    defaultLabel: 'Gemini',
+  },
+  {
+    value: 'claude',
+    labelKey: 'config_management.visual.payload_rules.provider_claude',
+    defaultLabel: 'Claude',
+  },
+  {
+    value: 'codex',
+    labelKey: 'config_management.visual.payload_rules.provider_codex',
+    defaultLabel: 'Codex',
+  },
+  {
+    value: 'antigravity',
+    labelKey: 'config_management.visual.payload_rules.provider_antigravity',
+    defaultLabel: 'Antigravity',
+  },
 ] as const;
 
 export const VISUAL_CONFIG_PAYLOAD_VALUE_TYPE_OPTIONS = [
-  { value: 'string', label: '字符串' },
-  { value: 'number', label: '数字' },
-  { value: 'boolean', label: '布尔' },
-  { value: 'json', label: 'JSON' },
-] as const satisfies ReadonlyArray<{ value: PayloadParamValueType; label: string }>;
+  {
+    value: 'string',
+    labelKey: 'config_management.visual.payload_rules.value_type_string',
+    defaultLabel: 'String',
+  },
+  {
+    value: 'number',
+    labelKey: 'config_management.visual.payload_rules.value_type_number',
+    defaultLabel: 'Number',
+  },
+  {
+    value: 'boolean',
+    labelKey: 'config_management.visual.payload_rules.value_type_boolean',
+    defaultLabel: 'Boolean',
+  },
+  {
+    value: 'json',
+    labelKey: 'config_management.visual.payload_rules.value_type_json',
+    defaultLabel: 'JSON',
+  },
+] as const satisfies ReadonlyArray<{
+  value: PayloadParamValueType;
+  labelKey: string;
+  defaultLabel: string;
+}>;

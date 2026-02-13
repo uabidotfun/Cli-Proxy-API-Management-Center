@@ -25,6 +25,121 @@
   flex-wrap: wrap;
 }
 
+.lastRefreshed {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.timeRangeGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.timeRangeLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.timeRangeSelectWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.timeRangeSelect {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 164px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background-color: var(--bg-primary);
+  box-shadow: var(--shadow);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  appearance: none;
+  text-align: left;
+
+  &:hover {
+    border-color: var(--border-hover);
+  }
+
+  &:focus {
+    outline: none;
+    box-shadow: var(--shadow), 0 0 0 3px rgba(59, 130, 246, 0.15);
+  }
+
+  &[aria-expanded='true'] {
+    border-color: var(--primary-color);
+    box-shadow: var(--shadow), 0 0 0 3px rgba(59, 130, 246, 0.15);
+  }
+}
+
+.timeRangeSelectedText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeRangeSelectIcon {
+  display: inline-flex;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+
+  [aria-expanded='true'] > & {
+    transform: rotate(180deg);
+  }
+}
+
+.timeRangeDropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: $radius-lg;
+  padding: 6px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timeRangeOption {
+  padding: 8px 12px;
+  border-radius: $radius-md;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+
+  &:hover {
+    background: var(--bg-secondary);
+  }
+}
+
+.timeRangeOptionActive {
+  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(59, 130, 246, 0.10);
+  font-weight: 600;
+}
+
 .pageTitle {
   font-size: 28px;
   font-weight: 700;
@@ -314,6 +429,42 @@
 }
 
 // API List (80%比例)
+.apiSortBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.apiSortBtn {
+  padding: 4px 10px;
+  border-radius: $radius-full;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 1px;
+  }
+}
+
+.apiSortBtnActive {
+  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(59, 130, 246, 0.10);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .apiList {
   display: flex;
   flex-direction: column;
@@ -328,15 +479,26 @@
 }
 
 .apiHeader {
+  width: 100%;
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   transition: background-color 0.15s ease;
 
   &:hover {
     background-color: var(--bg-tertiary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: -2px;
   }
 }
 
@@ -418,6 +580,26 @@
   }
 }
 
+// Fixed-height cards with internal scrolling (API details / model stats)
+.detailsFixedCard {
+  display: flex;
+  flex-direction: column;
+  height: 520px;
+  overflow: hidden;
+
+  @include mobile {
+    height: 420px;
+  }
+}
+
+.detailsScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 // Table (80%比例)
 .tableWrapper {
   overflow-x: auto;
@@ -441,6 +623,15 @@
     white-space: nowrap;
   }
 
+  th.sortableHeader {
+    user-select: none;
+    transition: color 0.15s ease;
+
+    &:hover {
+      color: var(--text-primary);
+    }
+  }
+
   td {
     color: var(--text-primary);
   }
@@ -450,10 +641,42 @@
   }
 }
 
+.sortHeaderButton {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: $radius-sm;
+  }
+}
+
 .modelCell {
   font-weight: 500;
   max-width: 240px;
   word-break: break-all;
+}
+
+.credentialType {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: $radius-full;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  vertical-align: middle;
 }
 
 .requestCountCell {
