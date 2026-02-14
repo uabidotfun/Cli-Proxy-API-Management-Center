@@ -54,6 +54,10 @@
     "login": "Центр управления CLI Proxy API",
     "abbr": "CPAMC"
   },
+  "splash": {
+    "title": "CLI Proxy API",
+    "subtitle": "Центр управления"
+  },
   "auto_login": {
     "title": "Автовход...",
     "message": "Пытаемся подключиться к серверу, используя сохранённые данные"
@@ -194,6 +198,8 @@
     "gemini_keys_add_btn": "Добавить ключ",
     "gemini_base_url_label": "Базовый URL (необязательно):",
     "gemini_base_url_placeholder": "например: https://generativelanguage.googleapis.com",
+    "gemini_add_modal_proxy_label": "URL прокси (необязательно):",
+    "gemini_add_modal_proxy_placeholder": "например: socks5://proxy.example.com:1080",
     "gemini_edit_modal_title": "Редактирование API-ключа Gemini",
     "gemini_edit_modal_key_label": "API-ключ:",
     "gemini_delete_confirm": "Удалить этот ключ Gemini?",
@@ -493,6 +499,8 @@
     "secondary_window": "Недельный лимит",
     "code_review_primary_window": "Лимит code review на 5 часов",
     "code_review_secondary_window": "Недельный лимит code review",
+    "additional_primary_window": "{{name}}: лимит на 5 часов",
+    "additional_secondary_window": "{{name}}: недельный лимит",
     "plan_label": "Тариф",
     "plan_plus": "Plus",
     "plan_team": "Team",

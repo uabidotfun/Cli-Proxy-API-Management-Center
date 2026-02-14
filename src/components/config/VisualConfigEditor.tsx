@@ -8,6 +8,7 @@ import { IconChevronDown } from '@/components/ui/icons';
 import { ConfigSection } from '@/components/config/ConfigSection';
 import { useNotificationStore } from '@/stores';
 import styles from './VisualConfigEditor.module.scss';
+import { copyToClipboard } from '@/utils/clipboard';
 import type {
   PayloadFilterRule,
   PayloadModelEntry,
@@ -174,8 +175,10 @@ function ToastSelect({
                 style={{
                   padding: '10px 12px',
                   borderRadius: 10,
-                  border: active ? '1px solid rgba(59, 130, 246, 0.5)' : '1px solid var(--border-color)',
-                  background: active ? 'rgba(59, 130, 246, 0.10)' : 'var(--bg-primary)',
+                  border: active
+                    ? '1px solid rgba(139, 134, 128, 0.5)'
+                    : '1px solid var(--border-color)',
+                  background: active ? 'rgba(139, 134, 128, 0.12)' : 'var(--bg-primary)',
                   color: 'var(--text-primary)',
                   cursor: 'pointer',
                   textAlign: 'left',
@@ -266,31 +269,11 @@ function ApiKeysCardEditor({
   };
 
   const handleCopy = async (apiKey: string) => {
-    const copyByExecCommand = () => {
-      const textarea = document.createElement('textarea');
-      textarea.value = apiKey;
-      textarea.setAttribute('readonly', '');
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      textarea.style.pointerEvents = 'none';
-      document.body.appendChild(textarea);
-      textarea.select();
-      textarea.setSelectionRange(0, textarea.value.length);
-      const copied = document.execCommand('copy');
-      document.body.removeChild(textarea);
-      if (!copied) throw new Error('copy_failed');
-    };
-
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(apiKey);
-      } else {
-        copyByExecCommand();
-      }
-      showNotification(t('notification.link_copied'), 'success');
-    } catch {
-      showNotification(t('notification.copy_failed'), 'error');
-    }
+    const copied = await copyToClipboard(apiKey);
+    showNotification(
+      t(copied ? 'notification.link_copied' : 'notification.copy_failed'),
+      copied ? 'success' : 'error'
+    );
   };
 
   return (
@@ -426,7 +409,7 @@ function PayloadRulesEditor({
   protocolFirst?: boolean;
   onChange: (next: PayloadRule[]) => void;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const rules = value.length ? value : [];
   const protocolOptions = useMemo(
     () =>
@@ -434,7 +417,7 @@ function PayloadRulesEditor({
         value: option.value,
         label: t(option.labelKey, { defaultValue: option.defaultLabel }),
       })),
-    [t, i18n.resolvedLanguage]
+    [t]
   );
   const payloadValueTypeOptions = useMemo(
     () =>
@@ -442,7 +425,7 @@ function PayloadRulesEditor({
         value: option.value,
         label: t(option.labelKey, { defaultValue: option.defaultLabel }),
       })),
-    [t, i18n.resolvedLanguage]
+    [t]
   );
 
   const addRule = () => onChange([...rules, { id: makeClientId(), models: [], params: [] }]);
@@ -685,7 +668,7 @@ function PayloadFilterRulesEditor({
   disabled?: boolean;
   onChange: (next: PayloadFilterRule[]) => void;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const rules = value.length ? value : [];
   const protocolOptions = useMemo(
     () =>
@@ -693,7 +676,7 @@ function PayloadFilterRulesEditor({
         value: option.value,
         label: t(option.labelKey, { defaultValue: option.defaultLabel }),
       })),
-    [t, i18n.resolvedLanguage]
+    [t]
   );
 
   const addRule = () => onChange([...rules, { id: makeClientId(), models: [], params: [] }]);
