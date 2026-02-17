@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/Card';
 import { HeaderInputList } from '@/components/ui/HeaderInputList';
 import { Input } from '@/components/ui/Input';
 import { ModelInputList } from '@/components/ui/ModelInputList';
+import { Select } from '@/components/ui/Select';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { useNotificationStore } from '@/stores';
@@ -139,6 +140,20 @@ export function AiProvidersOpenAIEditPage() {
   const canSave = !disableControls && !loading && !saving && !invalidIndexParam && !invalidIndex && !isTestingKeys;
   const hasConfiguredModels = form.modelEntries.some((entry) => entry.name.trim());
   const hasTestableKeys = form.apiKeyEntries.some((entry) => entry.apiKey?.trim());
+  const modelSelectOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return form.modelEntries.reduce<Array<{ value: string; label: string }>>((acc, entry) => {
+      const name = entry.name.trim();
+      if (!name || seen.has(name)) return acc;
+      seen.add(name);
+      const alias = entry.alias.trim();
+      acc.push({
+        value: name,
+        label: alias && alias !== name ? `${name} (${alias})` : name,
+      });
+      return acc;
+    }, []);
+  }, [form.modelEntries]);
   const connectivityConfigSignature = useMemo(() => {
     const headersSignature = form.headers
       .map((entry) => `${entry.key.trim()}:${entry.value.trim()}`)
@@ -496,9 +511,9 @@ export function AiProvidersOpenAIEditPage() {
     >
       <Card>
         {invalidIndexParam || invalidIndex ? (
-          <div className="hint">{t('common.invalid_provider_index')}</div>
+          <div className={styles.sectionHint}>{t('common.invalid_provider_index')}</div>
         ) : (
-          <>
+          <div className={styles.openaiEditForm}>
             <Input
               label={t('ai_providers.openai_add_modal_name_label')}
               value={form.name}
@@ -564,7 +579,7 @@ export function AiProvidersOpenAIEditPage() {
               </div>
 
               {/* 提示文本 */}
-              <div className="hint">{t('ai_providers.openai_models_hint')}</div>
+              <div className={styles.sectionHint}>{t('ai_providers.openai_models_hint')}</div>
 
               {/* 模型列表 */}
               <ModelInputList
@@ -589,34 +604,23 @@ export function AiProvidersOpenAIEditPage() {
                   <span className={styles.modelTestHint}>{t('ai_providers.openai_test_hint')}</span>
                 </div>
                 <div className={styles.modelTestControls}>
-                  <select
-                    className={`input ${styles.openaiTestSelect}`}
+                  <Select
                     value={testModel}
-                    onChange={(e) => {
-                      setTestModel(e.target.value);
+                    options={modelSelectOptions}
+                    onChange={(value) => {
+                      setTestModel(value);
                       setTestStatus('idle');
                       setTestMessage('');
                     }}
-                    disabled={saving || disableControls || isTestingKeys || testStatus === 'loading' || availableModels.length === 0}
-                  >
-                    <option value="">
-                      {availableModels.length
+                    placeholder={
+                      availableModels.length
                         ? t('ai_providers.openai_test_select_placeholder')
-                        : t('ai_providers.openai_test_select_empty')}
-                    </option>
-                    {form.modelEntries
-                      .filter((entry) => entry.name.trim())
-                      .map((entry, idx) => {
-                        const name = entry.name.trim();
-                        const alias = entry.alias.trim();
-                        const label = alias && alias !== name ? `${name} (${alias})` : name;
-                        return (
-                          <option key={`${name}-${idx}`} value={name}>
-                            {label}
-                          </option>
-                        );
-                      })}
-                  </select>
+                        : t('ai_providers.openai_test_select_empty')
+                    }
+                    className={styles.openaiTestSelect}
+                    ariaLabel={t('ai_providers.openai_test_title')}
+                    disabled={saving || disableControls || isTestingKeys || testStatus === 'loading' || availableModels.length === 0}
+                  />
                   <Button
                     variant={testStatus === 'error' ? 'danger' : 'secondary'}
                     size="sm"
@@ -645,14 +649,14 @@ export function AiProvidersOpenAIEditPage() {
               )}
             </div>
 
-            <div className={`form-group ${styles.keyEntriesSection}`}>
+            <div className={styles.keyEntriesSection}>
               <div className={styles.keyEntriesHeader}>
-                <label>{t('ai_providers.openai_add_modal_keys_label')}</label>
+                <label className={styles.keyEntriesTitle}>{t('ai_providers.openai_add_modal_keys_label')}</label>
                 <span className={styles.keyEntriesHint}>{t('ai_providers.openai_keys_hint')}</span>
               </div>
               {renderKeyEntries(form.apiKeyEntries)}
             </div>
-          </>
+          </div>
         )}
       </Card>
     </SecondaryScreenShell>

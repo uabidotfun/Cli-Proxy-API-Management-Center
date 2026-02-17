@@ -322,7 +322,7 @@
   gap: 6px;
   max-height: 360px;
   overflow-y: auto;
-  margin-top: 8px;
+  margin-top: 0;
   padding-right: 4px;
 }
 
@@ -402,35 +402,121 @@
   gap: 2px;
   flex: 1;
   min-width: 180px;
+  position: relative;
+}
+
+.statusBlockWrapper {
+  flex: 1;
+  min-width: 6px;
+  position: relative;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .statusBlock {
-  flex: 1;
+  width: 100%;
   height: 8px;
   border-radius: 2px;
-  min-width: 6px;
   transition: transform 0.15s ease, opacity 0.15s ease;
 
-  &:hover {
-    transform: scaleY(1.5);
-    opacity: 0.85;
+  .statusBlockWrapper:hover &,
+  .statusBlockWrapper.statusBlockActive & {
+    transform: scaleY(1.8);
+    opacity: 0.9;
   }
-}
-
-.statusBlockSuccess {
-  background-color: var(--success-color, #22c55e);
-}
-
-.statusBlockFailure {
-  background-color: var(--danger-color);
-}
-
-.statusBlockMixed {
-  background-color: var(--warning-color);
 }
 
 .statusBlockIdle {
   background-color: var(--border-secondary, #e5e7eb);
+}
+
+.statusTooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-secondary, #e5e7eb);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  z-index: $z-dropdown;
+  pointer-events: none;
+  color: var(--text-primary);
+
+  // 小箭头
+  &::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--bg-primary, #fff);
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: var(--border-secondary, #e5e7eb);
+  }
+}
+
+// 防止左右溢出
+.statusTooltipLeft {
+  left: 0;
+  transform: translateX(0);
+
+  &::after,
+  &::before {
+    left: 8px;
+    transform: none;
+  }
+}
+
+.statusTooltipRight {
+  left: auto;
+  right: 0;
+  transform: translateX(0);
+
+  &::after,
+  &::before {
+    left: auto;
+    right: 8px;
+    transform: none;
+  }
+}
+
+.tooltipTime {
+  color: var(--text-secondary);
+  display: block;
+  margin-bottom: 2px;
+}
+
+.tooltipStats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tooltipSuccess {
+  color: var(--success-color, #22c55e);
+}
+
+.tooltipFailure {
+  color: var(--danger-color, #ef4444);
+}
+
+.tooltipRate {
+  color: var(--text-secondary);
+  margin-left: 2px;
 }
 
 .statusRate {
@@ -460,15 +546,87 @@
   background: var(--failure-badge-bg);
 }
 
+@include mobile {
+  .statusTooltip {
+    font-size: 12px;
+    padding: 8px 12px;
+  }
+
+  .statusBlocks {
+    min-width: 140px;
+  }
+}
+
 // ============================================
 // Model Config Section - Unified Layout
 // ============================================
 
-.modelConfigSection {
-  margin-bottom: $spacing-md;
+.openaiEditForm {
   display: flex;
   flex-direction: column;
+  gap: $spacing-md;
+
+  :global(.form-group) {
+    margin-bottom: 0;
+  }
+
+  :global(.status-badge) {
+    margin-bottom: 0;
+    align-self: flex-start;
+  }
+}
+
+.sectionHint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.openaiModelsContent {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+
+  :global(.form-group) {
+    margin-bottom: 0;
+  }
+}
+
+.openaiModelsEndpointSection {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-xs;
+}
+
+.openaiModelsEndpointLabel {
+  display: block;
+  margin: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.openaiModelsEndpointControls {
+  display: flex;
+  align-items: center;
   gap: $spacing-sm;
+
+  @include mobile {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.openaiModelsEndpointInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.modelConfigSection {
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
 }
 
 .modelConfigHeader {
@@ -484,10 +642,11 @@
 }
 
 .modelConfigTitle {
+  margin: 0;
   font-weight: 600;
   color: var(--text-primary);
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .modelConfigToolbar {
@@ -549,7 +708,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: $spacing-md;
-  margin-top: $spacing-sm;
+  margin-top: 0;
   padding: $spacing-sm $spacing-md;
   border: 1px solid var(--border-color);
   border-radius: $radius-md;
@@ -564,7 +723,7 @@
 .modelTestMeta {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -572,13 +731,13 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .modelTestHint {
   font-size: 12px;
   color: var(--text-tertiary);
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .modelTestControls {
@@ -600,22 +759,29 @@
 
 .keyEntriesSection {
   margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
 }
 
 .keyEntriesHeader {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: $spacing-sm;
+  gap: 6px;
+  margin-bottom: 0;
+}
 
-  label {
-    margin: 0;
-  }
+.keyEntriesTitle {
+  display: block;
+  margin: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
 }
 
 .keyEntriesHint {
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.5;
   color: var(--text-secondary);
 }
 
@@ -814,6 +980,20 @@
 
   .statusBlockIdle {
     background-color: var(--border-primary, #374151);
+  }
+
+  .statusTooltip {
+    background: var(--bg-secondary, #1f2937);
+    border-color: var(--border-primary, #374151);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+
+    &::after {
+      border-top-color: var(--bg-secondary, #1f2937);
+    }
+
+    &::before {
+      border-top-color: var(--border-primary, #374151);
+    }
   }
 
   .statusRateHigh {

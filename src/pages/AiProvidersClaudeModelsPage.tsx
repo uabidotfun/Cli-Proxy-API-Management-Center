@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
@@ -9,8 +9,7 @@ import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { modelsApi } from '@/services/api';
 import type { ModelInfo } from '@/utils/models';
 import { buildHeaderObject } from '@/utils/headers';
-import { buildOpenAIModelsEndpoint } from '@/components/providers/utils';
-import type { OpenAIEditOutletContext } from './AiProvidersOpenAIEditLayout';
+import type { ClaudeEditOutletContext } from './AiProvidersClaudeEditLayout';
 import styles from './AiProvidersPage.module.scss';
 import layoutStyles from './AiProvidersEditLayout.module.scss';
 
@@ -20,7 +19,7 @@ const getErrorMessage = (err: unknown) => {
   return '';
 };
 
-export function AiProvidersOpenAIModelsPage() {
+export function AiProvidersClaudeModelsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const {
@@ -29,7 +28,7 @@ export function AiProvidersOpenAIModelsPage() {
     saving,
     form,
     mergeDiscoveredModels,
-  } = useOutletContext<OpenAIEditOutletContext>();
+  } = useOutletContext<ClaudeEditOutletContext>();
 
   const [endpoint, setEndpoint] = useState('');
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -37,6 +36,7 @@ export function AiProvidersOpenAIModelsPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const autoFetchSignatureRef = useRef<string>('');
 
   const filteredModels = useMemo(() => {
     const filter = search.trim().toLowerCase();
@@ -49,54 +49,73 @@ export function AiProvidersOpenAIModelsPage() {
     });
   }, [models, search]);
 
-  const fetchOpenaiModelDiscovery = useCallback(
-    async ({ allowFallback = true }: { allowFallback?: boolean } = {}) => {
-      const trimmedBaseUrl = form.baseUrl.trim();
-      if (!trimmedBaseUrl) return;
-
-      setFetching(true);
-      setError('');
-      try {
-        const headerObject = buildHeaderObject(form.headers);
-        const firstKey = form.apiKeyEntries.find((entry) => entry.apiKey?.trim())?.apiKey?.trim();
-        const hasAuthHeader = Boolean(headerObject.Authorization || headerObject['authorization']);
-        const list = await modelsApi.fetchModelsViaApiCall(
-          trimmedBaseUrl,
-          hasAuthHeader ? undefined : firstKey,
-          headerObject
-        );
-        setModels(list);
-      } catch (err: unknown) {
-        if (allowFallback) {
-          try {
-            const list = await modelsApi.fetchModelsViaApiCall(trimmedBaseUrl);
-            setModels(list);
-            return;
-          } catch (fallbackErr: unknown) {
-            const message = getErrorMessage(fallbackErr) || getErrorMessage(err);
-            setModels([]);
-            setError(`${t('ai_providers.openai_models_fetch_error')}: ${message}`);
-          }
-        } else {
-          setModels([]);
-          setError(`${t('ai_providers.openai_models_fetch_error')}: ${getErrorMessage(err)}`);
-        }
-      } finally {
-        setFetching(false);
-      }
-    },
-    [form.apiKeyEntries, form.baseUrl, form.headers, t]
-  );
+  const fetchClaudeModelDiscovery = useCallback(async () => {
+    setFetching(true);
+    setError('');
+    const headerObject = buildHeaderObject(form.headers);
+    try {
+      const list = await modelsApi.fetchClaudeModelsViaApiCall(
+        form.baseUrl ?? '',
+        form.apiKey.trim() || undefined,
+        headerObject
+      );
+      setModels(list);
+    } catch (err: unknown) {
+      setModels([]);
+      const message = getErrorMessage(err);
+      const hasCustomXApiKey = Object.keys(headerObject).some(
+        (key) => key.toLowerCase() === 'x-api-key'
+      );
+      const hasAuthorization = Object.keys(headerObject).some(
+        (key) => key.toLowerCase() === 'authorization'
+      );
+      const shouldAttachDiag =
+        message.toLowerCase().includes('x-api-key') || message.includes('401');
+      const diag = shouldAttachDiag
+        ? ` [diag: apiKeyField=${form.apiKey.trim() ? 'yes' : 'no'}, customXApiKey=${
+            hasCustomXApiKey ? 'yes' : 'no'
+          }, customAuthorization=${hasAuthorization ? 'yes' : 'no'}]`
+        : '';
+      setError(`${t('ai_providers.claude_models_fetch_error')}: ${message}${diag}`);
+    } finally {
+      setFetching(false);
+    }
+  }, [form.apiKey, form.baseUrl, form.headers, t]);
 
   useEffect(() => {
     if (initialLoading) return;
-    setEndpoint(buildOpenAIModelsEndpoint(form.baseUrl));
+
+    const nextEndpoint = modelsApi.buildClaudeModelsEndpoint(form.baseUrl ?? '');
+    setEndpoint(nextEndpoint);
     setModels([]);
     setSearch('');
     setSelected(new Set());
     setError('');
-    void fetchOpenaiModelDiscovery();
-  }, [fetchOpenaiModelDiscovery, form.baseUrl, initialLoading]);
+
+    const headerObject = buildHeaderObject(form.headers);
+    const hasCustomXApiKey = Object.keys(headerObject).some(
+      (key) => key.toLowerCase() === 'x-api-key'
+    );
+    const hasAuthorization = Object.keys(headerObject).some(
+      (key) => key.toLowerCase() === 'authorization'
+    );
+    const hasApiKeyField = Boolean(form.apiKey.trim());
+    const canAutoFetch = hasApiKeyField || hasCustomXApiKey || hasAuthorization;
+
+    // Avoid firing a guaranteed 401 on initial render (common while the parent form is still
+    // initializing), and avoid duplicate auto-fetches (e.g. React StrictMode in dev).
+    if (!canAutoFetch) return;
+
+    const headerSignature = Object.entries(headerObject)
+      .sort(([a], [b]) => a.toLowerCase().localeCompare(b.toLowerCase()))
+      .map(([key, value]) => `${key}:${value}`)
+      .join('|');
+    const signature = `${nextEndpoint}||${form.apiKey.trim()}||${headerSignature}`;
+    if (autoFetchSignatureRef.current === signature) return;
+    autoFetchSignatureRef.current = signature;
+
+    void fetchClaudeModelDiscovery();
+  }, [fetchClaudeModelDiscovery, form.apiKey, form.baseUrl, form.headers, initialLoading]);
 
   const handleBack = useCallback(() => {
     navigate(-1);
@@ -140,13 +159,13 @@ export function AiProvidersOpenAIModelsPage() {
     <SecondaryScreenShell
       ref={swipeRef}
       contentClassName={layoutStyles.content}
-      title={t('ai_providers.openai_models_fetch_title')}
+      title={t('ai_providers.claude_models_fetch_title')}
       onBack={handleBack}
       backLabel={t('common.back')}
       backAriaLabel={t('common.back')}
       rightAction={
         <Button size="sm" onClick={handleApply} disabled={!canApply}>
-          {t('ai_providers.openai_models_fetch_apply')}
+          {t('ai_providers.claude_models_fetch_apply')}
         </Button>
       }
       isLoading={initialLoading}
@@ -154,10 +173,10 @@ export function AiProvidersOpenAIModelsPage() {
     >
       <Card>
         <div className={styles.openaiModelsContent}>
-          <div className={styles.sectionHint}>{t('ai_providers.openai_models_fetch_hint')}</div>
+          <div className={styles.sectionHint}>{t('ai_providers.claude_models_fetch_hint')}</div>
           <div className={styles.openaiModelsEndpointSection}>
             <label className={styles.openaiModelsEndpointLabel}>
-              {t('ai_providers.openai_models_fetch_url_label')}
+              {t('ai_providers.claude_models_fetch_url_label')}
             </label>
             <div className={styles.openaiModelsEndpointControls}>
               <input
@@ -168,28 +187,28 @@ export function AiProvidersOpenAIModelsPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => void fetchOpenaiModelDiscovery({ allowFallback: true })}
+                onClick={() => void fetchClaudeModelDiscovery()}
                 loading={fetching}
                 disabled={disableControls || saving}
               >
-                {t('ai_providers.openai_models_fetch_refresh')}
+                {t('ai_providers.claude_models_fetch_refresh')}
               </Button>
             </div>
           </div>
           <Input
-            label={t('ai_providers.openai_models_search_label')}
-            placeholder={t('ai_providers.openai_models_search_placeholder')}
+            label={t('ai_providers.claude_models_search_label')}
+            placeholder={t('ai_providers.claude_models_search_placeholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             disabled={fetching}
           />
           {error && <div className="error-box">{error}</div>}
           {fetching ? (
-            <div className={styles.sectionHint}>{t('ai_providers.openai_models_fetch_loading')}</div>
+            <div className={styles.sectionHint}>{t('ai_providers.claude_models_fetch_loading')}</div>
           ) : models.length === 0 ? (
-            <div className={styles.sectionHint}>{t('ai_providers.openai_models_fetch_empty')}</div>
+            <div className={styles.sectionHint}>{t('ai_providers.claude_models_fetch_empty')}</div>
           ) : filteredModels.length === 0 ? (
-            <div className={styles.sectionHint}>{t('ai_providers.openai_models_search_empty')}</div>
+            <div className={styles.sectionHint}>{t('ai_providers.claude_models_search_empty')}</div>
           ) : (
             <div className={styles.modelDiscoveryList}>
               {filteredModels.map((model) => {
