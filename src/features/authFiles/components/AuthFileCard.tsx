@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { IconBot, IconCheck, IconCode, IconDownload, IconInfo, IconTrash2 } from '@/components/ui/icons';
+import { IconBot, IconCheck, IconCode, IconDownload, IconInfo, IconRefreshCw, IconTrash2 } from '@/components/ui/icons';
 import { ProviderStatusBar } from '@/components/providers/ProviderStatusBar';
 import type { AuthFileItem } from '@/types';
 import { resolveAuthProvider } from '@/utils/quota';
@@ -40,6 +40,7 @@ export type AuthFileCardProps = {
   onDelete: (name: string) => void;
   onToggleStatus: (file: AuthFileItem, enabled: boolean) => void;
   onToggleSelect: (name: string) => void;
+  onRefreshQuota?: (file: AuthFileItem, quotaType: QuotaProviderType) => void;
 };
 
 const resolveQuotaType = (file: AuthFileItem): QuotaProviderType | null => {
@@ -66,7 +67,8 @@ export function AuthFileCard(props: AuthFileCardProps) {
     onOpenPrefixProxyEditor,
     onDelete,
     onToggleStatus,
-    onToggleSelect
+    onToggleSelect,
+    onRefreshQuota
   } = props;
 
   const fileStats = resolveAuthFileStats(file, keyStats);
@@ -151,6 +153,18 @@ export function AuthFileCard(props: AuthFileCardProps) {
           )}
 
           <div className={styles.cardActions}>
+            {showQuotaLayout && quotaType && onRefreshQuota && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void onRefreshQuota(file, quotaType)}
+                className={styles.iconButton}
+                title={t('auth_files.quota_refresh_button', { defaultValue: '刷新额度' })}
+                disabled={disableControls || file.disabled}
+              >
+                <IconRefreshCw className={styles.actionIcon} size={16} />
+              </Button>
+            )}
             {showModelsButton && (
               <Button
                 variant="secondary"

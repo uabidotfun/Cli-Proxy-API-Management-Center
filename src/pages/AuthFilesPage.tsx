@@ -36,8 +36,10 @@ import { useAuthFilesPrefixProxyEditor } from '@/features/authFiles/hooks/useAut
 import { useAuthFilesStats } from '@/features/authFiles/hooks/useAuthFilesStats';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
 import { readAuthFilesUiState, writeAuthFilesUiState } from '@/features/authFiles/uiState';
-import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
+import { useAuthStore, useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
+import { ANTIGRAVITY_CONFIG, CODEX_CONFIG, GEMINI_CLI_CONFIG } from '@/components/quota';
+import { getStatusFromError } from '@/utils/quota';
 import styles from './AuthFilesPage.module.scss';
 
 export function AuthFilesPage() {
@@ -207,6 +209,52 @@ export function AuthFilesPage() {
   }, [loadFiles, loadKeyStats, loadExcluded, loadModelAlias]);
 
   useHeaderRefresh(handleHeaderRefresh);
+
+  // 单个文件额度刷新
+  const handleRefreshQuota = useCallback(
+    async (file: AuthFileItem, quotaType: QuotaProviderType) => {
+      if (isRuntimeOnlyAuthFile(file) || file.disabled) return;
+
+      const configMap = {
+        antigravity: ANTIGRAVITY_CONFIG,
+        codex: CODEX_CONFIG,
+        'gemini-cli': GEMINI_CLI_CONFIG,
+      } as const;
+      const config = configMap[quotaType] as unknown as {
+        fetchQuota: (f: AuthFileItem, tr: typeof t) => Promise<unknown>;
+        buildLoadingState: () => unknown;
+        buildSuccessState: (data: unknown) => unknown;
+        buildErrorState: (msg: string, st?: number) => unknown;
+      };
+
+      const setterMap = {
+        antigravity: 'setAntigravityQuota',
+        codex: 'setCodexQuota',
+        'gemini-cli': 'setGeminiCliQuota',
+      } as const;
+      const update = (updater: (prev: Record<string, unknown>) => Record<string, unknown>) => {
+        const setter = useQuotaStore.getState()[setterMap[quotaType]];
+        (setter as (fn: unknown) => void)(updater);
+      };
+
+      update((prev) => ({ ...prev, [file.name]: config.buildLoadingState() }));
+
+      try {
+        const data = await config.fetchQuota(file, t);
+        update((prev) => ({ ...prev, [file.name]: config.buildSuccessState(data) }));
+        showNotification(t('auth_files.quota_refresh_success', { name: file.name }), 'success');
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : t('common.unknown_error');
+        const status = getStatusFromError(err);
+        update((prev) => ({ ...prev, [file.name]: config.buildErrorState(message, status) }));
+        showNotification(
+          t('auth_files.quota_refresh_failed', { name: file.name, message }),
+          'error'
+        );
+      }
+    },
+    [t, showNotification]
+  );
 
   useEffect(() => {
     if (!isCurrentLayer) return;
@@ -519,6 +567,7 @@ export function AuthFilesPage() {
                 onDelete={handleDelete}
                 onToggleStatus={handleStatusToggle}
                 onToggleSelect={toggleSelect}
+                onRefreshQuota={handleRefreshQuota}
               />
             ))}
           </div>
