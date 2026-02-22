@@ -19,10 +19,18 @@ import {
 } from '@/components/ui/icons';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
+import { authFilesApi } from '@/services/api/authFiles';
 import { logsApi } from '@/services/api/logs';
+import { usageApi } from '@/services/api/usage';
+import type { AuthFileItem } from '@/types';
 import { copyToClipboard } from '@/utils/clipboard';
 import { MANAGEMENT_API_PREFIX } from '@/utils/constants';
 import { formatUnixTimestamp } from '@/utils/format';
+import {
+  buildCandidateUsageSourceIds,
+  collectUsageDetailsWithEndpoint,
+  type UsageDetailWithEndpoint
+} from '@/utils/usage';
 import styles from './LogsPage.module.scss';
 
 interface ErrorLogItem {
@@ -49,6 +57,9 @@ const LONG_PRESS_MOVE_THRESHOLD = 10;
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
 const HTTP_METHOD_REGEX = new RegExp(`\\b(${HTTP_METHODS.join('|')})\\b`);
+const STATUS_GROUPS = ['2xx', '3xx', '4xx', '5xx'] as const;
+type StatusGroup = (typeof STATUS_GROUPS)[number];
+const PATH_FILTER_LIMIT = 12;
 
 const LOG_TIMESTAMP_REGEX = /^\[?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)\]?/;
 const LOG_LEVEL_REGEX = /^\[?(trace|debug|info|warn|warning|error|fatal)\s*\]?(?=\s|\[|$)\s*/i;
@@ -78,6 +89,15 @@ const detectHttpStatusCode = (text: string): number | undefined => {
     if (!Number.isFinite(code)) continue;
     if (code >= 100 && code <= 599) return code;
   }
+  return undefined;
+};
+
+const resolveStatusGroup = (statusCode?: number): StatusGroup | undefined => {
+  if (typeof statusCode !== 'number') return undefined;
+  if (statusCode >= 200 && statusCode < 300) return '2xx';
+  if (statusCode >= 300 && statusCode < 400) return '3xx';
+  if (statusCode >= 400 && statusCode < 500) return '4xx';
+  if (statusCode >= 500 && statusCode < 600) return '5xx';
   return undefined;
 };
 
@@ -124,6 +144,124 @@ type ParsedLogLine = {
   method?: HttpMethod;
   path?: string;
   message: string;
+};
+
+type TraceConfidence = 'high' | 'medium' | 'low';
+
+type TraceCandidate = {
+  detail: UsageDetailWithEndpoint;
+  score: number;
+  confidence: TraceConfidence;
+  timeDeltaMs: number | null;
+};
+
+type TraceCredentialInfo = {
+  name: string;
+  type: string;
+};
+
+type TraceSourceInfo = {
+  displayName: string;
+  type: string;
+};
+
+const TRACE_USAGE_CACHE_MS = 60 * 1000;
+const TRACE_MATCH_STRONG_WINDOW_MS = 3 * 1000;
+const TRACE_MATCH_WINDOW_MS = 10 * 1000;
+const TRACE_MATCH_MAX_WINDOW_MS = 30 * 1000;
+
+const normalizeTraceAuthIndex = (value: unknown): string | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toString();
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  return null;
+};
+
+const normalizeTracePath = (value?: string) =>
+  String(value ?? '')
+    .replace(/^"+|"+$/g, '')
+    .split('?')[0]
+    .trim();
+
+const TRACEABLE_EXACT_PATHS = new Set(['/v1/chat/completions', '/v1/messages', '/v1/responses']);
+const TRACEABLE_PREFIX_PATHS = ['/v1beta/models'];
+
+const normalizeTraceablePath = (value?: string): string => {
+  const normalized = normalizeTracePath(value);
+  if (!normalized || normalized === '/') return normalized;
+  return normalized.replace(/\/+$/, '');
+};
+
+const isTraceableRequestPath = (value?: string): boolean => {
+  const normalizedPath = normalizeTraceablePath(value);
+  if (!normalizedPath) return false;
+  if (TRACEABLE_EXACT_PATHS.has(normalizedPath)) return true;
+  return TRACEABLE_PREFIX_PATHS.some((prefix) => normalizedPath.startsWith(prefix));
+};
+
+const scoreTraceCandidate = (
+  line: ParsedLogLine,
+  detail: UsageDetailWithEndpoint
+): TraceCandidate | null => {
+  let score = 0;
+  let timeDeltaMs: number | null = null;
+
+  const logTimestampMs = line.timestamp ? Date.parse(line.timestamp) : Number.NaN;
+  const detailTimestampMs = detail.__timestampMs;
+  if (!Number.isNaN(logTimestampMs) && detailTimestampMs > 0) {
+    timeDeltaMs = Math.abs(logTimestampMs - detailTimestampMs);
+    if (timeDeltaMs <= TRACE_MATCH_STRONG_WINDOW_MS) {
+      score += 42;
+    } else if (timeDeltaMs <= TRACE_MATCH_WINDOW_MS) {
+      score += 30;
+    } else if (timeDeltaMs <= TRACE_MATCH_MAX_WINDOW_MS) {
+      score += 12;
+    } else {
+      score -= 12;
+    }
+  }
+
+  let methodMatched = false;
+  if (line.method && detail.__endpointMethod) {
+    if (line.method.toUpperCase() === detail.__endpointMethod.toUpperCase()) {
+      score += 18;
+      methodMatched = true;
+    } else {
+      score -= 8;
+    }
+  }
+
+  const logPath = normalizeTracePath(line.path);
+  const detailPath = normalizeTracePath(detail.__endpointPath);
+  let pathMatched = false;
+  if (logPath && detailPath) {
+    if (logPath === detailPath) {
+      score += 24;
+      pathMatched = true;
+    } else if (logPath.startsWith(detailPath) || detailPath.startsWith(logPath)) {
+      score += 12;
+      pathMatched = true;
+    } else {
+      score -= 8;
+    }
+  }
+
+  if (typeof line.statusCode === 'number') {
+    const logFailed = line.statusCode >= 400;
+    score += logFailed === detail.failed ? 10 : -6;
+  }
+
+  if (timeDeltaMs !== null && timeDeltaMs > TRACE_MATCH_MAX_WINDOW_MS && !methodMatched && !pathMatched) {
+    return null;
+  }
+
+  if (score <= 0) return null;
+  const confidence: TraceConfidence = score >= 70 ? 'high' : score >= 45 ? 'medium' : 'low';
+  return { detail, score, confidence, timeDeltaMs };
 };
 
 const extractLogLevel = (value: string): LogLevel | undefined => {
@@ -351,7 +489,8 @@ export function LogsPage() {
   const { t } = useTranslation();
   const { showNotification, showConfirmation } = useNotificationStore();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
-  const requestLogEnabled = useConfigStore((state) => state.config?.requestLog ?? false);
+  const config = useConfigStore((state) => state.config);
+  const requestLogEnabled = config?.requestLog ?? false;
 
   const [activeTab, setActiveTab] = useState<TabType>('logs');
   const [logState, setLogState] = useState<LogState>({ buffer: [], visibleFrom: 0 });
@@ -362,11 +501,19 @@ export function LogsPage() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [hideManagementLogs, setHideManagementLogs] = useState(true);
   const [showRawLogs, setShowRawLogs] = useState(false);
+  const [methodFilters, setMethodFilters] = useState<HttpMethod[]>([]);
+  const [statusFilters, setStatusFilters] = useState<StatusGroup[]>([]);
+  const [pathFilters, setPathFilters] = useState<string[]>([]);
   const [errorLogs, setErrorLogs] = useState<ErrorLogItem[]>([]);
   const [loadingErrors, setLoadingErrors] = useState(false);
   const [errorLogsError, setErrorLogsError] = useState('');
   const [requestLogId, setRequestLogId] = useState<string | null>(null);
   const [requestLogDownloading, setRequestLogDownloading] = useState(false);
+  const [traceLogLine, setTraceLogLine] = useState<ParsedLogLine | null>(null);
+  const [traceUsageDetails, setTraceUsageDetails] = useState<UsageDetailWithEndpoint[]>([]);
+  const [traceAuthFileMap, setTraceAuthFileMap] = useState<Map<string, TraceCredentialInfo>>(new Map());
+  const [traceLoading, setTraceLoading] = useState(false);
+  const [traceError, setTraceError] = useState('');
 
   const logViewerRef = useRef<HTMLDivElement | null>(null);
   const pendingScrollToBottomRef = useRef(false);
@@ -379,11 +526,77 @@ export function LogsPage() {
   } | null>(null);
   const logRequestInFlightRef = useRef(false);
   const pendingFullReloadRef = useRef(false);
+  const traceUsageLoadedAtRef = useRef(0);
+  const traceAuthLoadedAtRef = useRef(0);
 
   // 保存最新时间戳用于增量获取
   const latestTimestampRef = useRef<number>(0);
 
   const disableControls = connectionStatus !== 'connected';
+  const traceSourceInfoMap = useMemo(() => {
+    const map = new Map<string, TraceSourceInfo>();
+
+    const registerSource = (sourceId: string, displayName: string, type: string) => {
+      if (!sourceId || !displayName || map.has(sourceId)) return;
+      map.set(sourceId, { displayName, type });
+    };
+
+    const registerCandidates = (displayName: string, type: string, candidates: string[]) => {
+      candidates.forEach((sourceId) => registerSource(sourceId, displayName, type));
+    };
+
+    (config?.geminiApiKeys || []).forEach((item, index) => {
+      const displayName = item.prefix?.trim() || `Gemini #${index + 1}`;
+      registerCandidates(
+        displayName,
+        'gemini',
+        buildCandidateUsageSourceIds({ apiKey: item.apiKey, prefix: item.prefix })
+      );
+    });
+
+    (config?.claudeApiKeys || []).forEach((item, index) => {
+      const displayName = item.prefix?.trim() || `Claude #${index + 1}`;
+      registerCandidates(
+        displayName,
+        'claude',
+        buildCandidateUsageSourceIds({ apiKey: item.apiKey, prefix: item.prefix })
+      );
+    });
+
+    (config?.codexApiKeys || []).forEach((item, index) => {
+      const displayName = item.prefix?.trim() || `Codex #${index + 1}`;
+      registerCandidates(
+        displayName,
+        'codex',
+        buildCandidateUsageSourceIds({ apiKey: item.apiKey, prefix: item.prefix })
+      );
+    });
+
+    (config?.vertexApiKeys || []).forEach((item, index) => {
+      const displayName = item.prefix?.trim() || `Vertex #${index + 1}`;
+      registerCandidates(
+        displayName,
+        'vertex',
+        buildCandidateUsageSourceIds({ apiKey: item.apiKey, prefix: item.prefix })
+      );
+    });
+
+    (config?.openaiCompatibility || []).forEach((provider, providerIndex) => {
+      const displayName = provider.prefix?.trim() || provider.name || `OpenAI #${providerIndex + 1}`;
+      const candidates = new Set<string>();
+      buildCandidateUsageSourceIds({ prefix: provider.prefix }).forEach((sourceId) =>
+        candidates.add(sourceId)
+      );
+      (provider.apiKeyEntries || []).forEach((entry) => {
+        buildCandidateUsageSourceIds({ apiKey: entry.apiKey }).forEach((sourceId) =>
+          candidates.add(sourceId)
+        );
+      });
+      registerCandidates(displayName, 'openai', Array.from(candidates));
+    });
+
+    return map;
+  }, [config]);
 
   const isNearBottom = (node: HTMLDivElement | null) => {
     if (!node) return true;
@@ -551,6 +764,56 @@ export function LogsPage() {
     }
   };
 
+  const loadTraceUsageDetails = useCallback(async () => {
+    if (traceLoading) return;
+
+    const now = Date.now();
+    const usageFresh =
+      traceUsageLoadedAtRef.current > 0 && now - traceUsageLoadedAtRef.current < TRACE_USAGE_CACHE_MS;
+    const authFresh =
+      traceAuthLoadedAtRef.current > 0 && now - traceAuthLoadedAtRef.current < TRACE_USAGE_CACHE_MS;
+    if (usageFresh && authFresh) return;
+
+    setTraceLoading(true);
+    setTraceError('');
+    try {
+      const [usageResponse, authFilesResponse] = await Promise.all([
+        usageFresh ? Promise.resolve(null) : usageApi.getUsage(),
+        authFresh ? Promise.resolve(null) : authFilesApi.list().catch(() => null)
+      ]);
+
+      if (usageResponse !== null) {
+        const usageData = usageResponse?.usage ?? usageResponse;
+        const details = collectUsageDetailsWithEndpoint(usageData);
+        setTraceUsageDetails(details);
+        traceUsageLoadedAtRef.current = now;
+      }
+
+      if (authFilesResponse !== null) {
+        const files = Array.isArray(authFilesResponse)
+          ? authFilesResponse
+          : (authFilesResponse as { files?: AuthFileItem[] })?.files;
+        if (Array.isArray(files)) {
+          const map = new Map<string, TraceCredentialInfo>();
+          files.forEach((file) => {
+            const key = normalizeTraceAuthIndex(file['auth_index'] ?? file.authIndex);
+            if (!key) return;
+            map.set(key, {
+              name: file.name || key,
+              type: (file.type || file.provider || '').toString()
+            });
+          });
+          setTraceAuthFileMap(map);
+          traceAuthLoadedAtRef.current = now;
+        }
+      }
+    } catch (err: unknown) {
+      setTraceError(getErrorMessage(err) || t('logs.trace_usage_load_error'));
+    } finally {
+      setTraceLoading(false);
+    }
+  }, [t, traceLoading]);
+
   useEffect(() => {
     if (connectionStatus === 'connected') {
       latestTimestampRef.current = 0;
@@ -595,46 +858,172 @@ export function LogsPage() {
   const isSearching = trimmedSearchQuery.length > 0;
   const baseLines = isSearching ? logState.buffer : visibleLines;
 
-  const { filteredLines, removedCount } = useMemo(() => {
+  const methodFilterSet = useMemo(() => new Set(methodFilters), [methodFilters]);
+  const statusFilterSet = useMemo(() => new Set(statusFilters), [statusFilters]);
+  const pathFilterSet = useMemo(() => new Set(pathFilters), [pathFilters]);
+  const hasStructuredFilters = methodFilters.length > 0 || statusFilters.length > 0 || pathFilters.length > 0;
+
+  const {
+    parsedSearchLines,
+    filteredParsedLines,
+    filteredLines,
+    removedCount,
+  } = useMemo(() => {
     let working = baseLines;
-    let removed = 0;
 
     if (hideManagementLogs) {
-      const next: string[] = [];
-      for (const line of working) {
-        if (line.includes(MANAGEMENT_API_PREFIX)) {
-          removed += 1;
-        } else {
-          next.push(line);
-        }
-      }
-      working = next;
+      working = working.filter((line) => !line.includes(MANAGEMENT_API_PREFIX));
     }
 
     if (trimmedSearchQuery) {
       const queryLowered = trimmedSearchQuery.toLowerCase();
-      const next: string[] = [];
-      for (const line of working) {
-        if (line.toLowerCase().includes(queryLowered)) {
-          next.push(line);
-        } else {
-          removed += 1;
-        }
-      }
-      working = next;
+      working = working.filter((line) => line.toLowerCase().includes(queryLowered));
     }
 
-    return { filteredLines: working, removedCount: removed };
-  }, [baseLines, hideManagementLogs, trimmedSearchQuery]);
+    const parsed = working.map((line) => parseLogLine(line));
+    const filteredParsed = parsed.filter((line) => {
+      if (methodFilterSet.size > 0 && (!line.method || !methodFilterSet.has(line.method))) {
+        return false;
+      }
 
-  const parsedVisibleLines = useMemo(() => {
-    if (showRawLogs) return [];
-    return filteredLines.map((line) => parseLogLine(line));
-  }, [filteredLines, showRawLogs]);
+      const statusGroup = resolveStatusGroup(line.statusCode);
+      if (statusFilterSet.size > 0 && (!statusGroup || !statusFilterSet.has(statusGroup))) {
+        return false;
+      }
+
+      if (pathFilterSet.size > 0 && (!line.path || !pathFilterSet.has(line.path))) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return {
+      parsedSearchLines: parsed,
+      filteredParsedLines: filteredParsed,
+      filteredLines: filteredParsed.map((line) => line.raw),
+      removedCount: Math.max(baseLines.length - filteredParsed.length, 0)
+    };
+  }, [
+    baseLines,
+    hideManagementLogs,
+    methodFilterSet,
+    pathFilterSet,
+    statusFilterSet,
+    trimmedSearchQuery
+  ]);
+
+  const parsedVisibleLines = useMemo(
+    () => (showRawLogs ? [] : filteredParsedLines),
+    [filteredParsedLines, showRawLogs]
+  );
 
   const rawVisibleText = useMemo(() => filteredLines.join('\n'), [filteredLines]);
+  const traceCandidates = useMemo(() => {
+    if (!traceLogLine) return [];
+    const scored = traceUsageDetails
+      .map((detail) => scoreTraceCandidate(traceLogLine, detail))
+      .filter((item): item is TraceCandidate => item !== null)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        const aDelta = a.timeDeltaMs ?? Number.MAX_SAFE_INTEGER;
+        const bDelta = b.timeDeltaMs ?? Number.MAX_SAFE_INTEGER;
+        return aDelta - bDelta;
+      });
+    return scored.slice(0, 8);
+  }, [traceLogLine, traceUsageDetails]);
+  const resolveTraceSourceInfo = useCallback(
+    (sourceRaw: string, authIndex: unknown): TraceSourceInfo => {
+      const source = sourceRaw.trim();
+      const matchedSource = traceSourceInfoMap.get(source);
+      if (matchedSource) {
+        return matchedSource;
+      }
+
+      const authIndexKey = normalizeTraceAuthIndex(authIndex);
+      if (authIndexKey) {
+        const authInfo = traceAuthFileMap.get(authIndexKey);
+        if (authInfo) {
+          return {
+            displayName: authInfo.name || authIndexKey,
+            type: authInfo.type
+          };
+        }
+      }
+
+      return {
+        displayName: source.startsWith('t:') ? source.slice(2) : source || '-',
+        type: ''
+      };
+    },
+    [traceAuthFileMap, traceSourceInfoMap]
+  );
 
   const canLoadMore = !isSearching && logState.visibleFrom > 0;
+
+  const methodCounts = useMemo(() => {
+    const counts: Partial<Record<HttpMethod, number>> = {};
+    parsedSearchLines.forEach((line) => {
+      if (!line.method) return;
+      counts[line.method] = (counts[line.method] ?? 0) + 1;
+    });
+    return counts;
+  }, [parsedSearchLines]);
+
+  const statusCounts = useMemo(() => {
+    const counts: Partial<Record<StatusGroup, number>> = {};
+    parsedSearchLines.forEach((line) => {
+      const statusGroup = resolveStatusGroup(line.statusCode);
+      if (!statusGroup) return;
+      counts[statusGroup] = (counts[statusGroup] ?? 0) + 1;
+    });
+    return counts;
+  }, [parsedSearchLines]);
+
+  const pathOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    parsedSearchLines.forEach((line) => {
+      if (!line.path) return;
+      counts.set(line.path, (counts.get(line.path) ?? 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, PATH_FILTER_LIMIT)
+      .map(([path, count]) => ({ path, count }));
+  }, [parsedSearchLines]);
+
+  useEffect(() => {
+    if (pathFilters.length === 0) return;
+    const validPathSet = new Set(pathOptions.map((item) => item.path));
+    setPathFilters((prev) => {
+      const next = prev.filter((path) => validPathSet.has(path));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [pathFilters, pathOptions]);
+
+  const toggleMethodFilter = (method: HttpMethod) => {
+    setMethodFilters((prev) =>
+      prev.includes(method) ? prev.filter((item) => item !== method) : [...prev, method]
+    );
+  };
+
+  const toggleStatusFilter = (statusGroup: StatusGroup) => {
+    setStatusFilters((prev) =>
+      prev.includes(statusGroup) ? prev.filter((item) => item !== statusGroup) : [...prev, statusGroup]
+    );
+  };
+
+  const togglePathFilter = (path: string) => {
+    setPathFilters((prev) =>
+      prev.includes(path) ? prev.filter((item) => item !== path) : [...prev, path]
+    );
+  };
+
+  const clearStructuredFilters = () => {
+    setMethodFilters([]);
+    setStatusFilters([]);
+    setPathFilters([]);
+  };
 
   const prependVisibleLines = useCallback(() => {
     const node = logViewerRef.current;
@@ -777,6 +1166,18 @@ export function LogsPage() {
     }
   };
 
+  const openTraceModal = (line: ParsedLogLine) => {
+    if (!isTraceableRequestPath(line.path)) return;
+    cancelLongPress();
+    setTraceLogLine(line);
+    void loadTraceUsageDetails();
+  };
+
+  const closeTraceModal = () => {
+    if (requestLogDownloading) return;
+    setTraceLogLine(null);
+  };
+
   const closeRequestLogModal = () => {
     if (requestLogDownloading) return;
     setRequestLogId(null);
@@ -864,6 +1265,86 @@ export function LogsPage() {
                     )
                   }
                 />
+              </div>
+
+              <div className={styles.structuredFilters}>
+                <div className={styles.filterChipGroup}>
+                  <span className={styles.filterChipLabel}>{t('logs.filter_method')}</span>
+                  <div className={styles.filterChipList}>
+                    {HTTP_METHODS.map((method) => {
+                      const active = methodFilters.includes(method);
+                      const count = methodCounts[method] ?? 0;
+                      return (
+                        <button
+                          key={method}
+                          type="button"
+                          className={`${styles.filterChip} ${active ? styles.filterChipActive : ''}`}
+                          onClick={() => toggleMethodFilter(method)}
+                          disabled={count === 0 && !active}
+                          aria-pressed={active}
+                        >
+                          {method} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className={styles.filterChipGroup}>
+                  <span className={styles.filterChipLabel}>{t('logs.filter_status')}</span>
+                  <div className={styles.filterChipList}>
+                    {STATUS_GROUPS.map((statusGroup) => {
+                      const active = statusFilters.includes(statusGroup);
+                      const count = statusCounts[statusGroup] ?? 0;
+                      return (
+                        <button
+                          key={statusGroup}
+                          type="button"
+                          className={`${styles.filterChip} ${active ? styles.filterChipActive : ''}`}
+                          onClick={() => toggleStatusFilter(statusGroup)}
+                          disabled={count === 0 && !active}
+                          aria-pressed={active}
+                        >
+                          {t(`logs.filter_status_${statusGroup}`)} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className={styles.filterChipGroup}>
+                  <span className={styles.filterChipLabel}>{t('logs.filter_path')}</span>
+                  <div className={styles.filterChipList}>
+                    {pathOptions.length === 0 ? (
+                      <span className={styles.filterChipHint}>{t('logs.filter_path_empty')}</span>
+                    ) : (
+                      pathOptions.map(({ path, count }) => {
+                        const active = pathFilters.includes(path);
+                        return (
+                          <button
+                            key={path}
+                            type="button"
+                            className={`${styles.filterChip} ${active ? styles.filterChipActive : ''}`}
+                            onClick={() => togglePathFilter(path)}
+                            aria-pressed={active}
+                            title={path}
+                          >
+                            {path} ({count})
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearStructuredFilters}
+                  disabled={!hasStructuredFilters}
+                >
+                  {t('logs.clear_filters')}
+                </Button>
               </div>
 
               <ToggleSwitch
@@ -973,6 +1454,7 @@ export function LogsPage() {
                 ) : (
                   <div className={styles.logList}>
                     {parsedVisibleLines.map((line, index) => {
+                      const canTraceRequest = isTraceableRequestPath(line.path);
                       const rowClassNames = [styles.logRow];
                       if (line.level === 'warn') rowClassNames.push(styles.rowWarn);
                       if (line.level === 'error' || line.level === 'fatal')
@@ -1063,6 +1545,20 @@ export function LogsPage() {
                             )}
 
                             {line.message && <span className={styles.message}>{line.message}</span>}
+
+                            {canTraceRequest && (
+                              <button
+                                type="button"
+                                className={styles.traceButton}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openTraceModal(line);
+                                }}
+                                title={t('logs.trace_button')}
+                              >
+                                {t('logs.trace_button')}
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -1141,6 +1637,162 @@ export function LogsPage() {
           </Card>
         )}
       </div>
+
+      <Modal
+        open={Boolean(traceLogLine)}
+        onClose={closeTraceModal}
+        title={t('logs.trace_title')}
+        footer={
+          <>
+            {traceLogLine?.requestId && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (traceLogLine.requestId) {
+                    void downloadRequestLog(traceLogLine.requestId);
+                  }
+                }}
+                loading={requestLogDownloading}
+              >
+                {t('logs.trace_download_request_log')}
+              </Button>
+            )}
+            <Button variant="secondary" onClick={closeTraceModal} disabled={requestLogDownloading}>
+              {t('common.close')}
+            </Button>
+          </>
+        }
+      >
+        {traceLogLine && (
+          <div className={styles.tracePanel}>
+            <div className={styles.traceNotice}>{t('logs.trace_notice')}</div>
+
+            <h3 className={styles.traceSectionTitle}>{t('logs.trace_log_info')}</h3>
+            <div className={styles.traceInfoGrid}>
+              <div className={styles.traceInfoItem}>
+                <span className={styles.traceInfoLabel}>{t('logs.trace_request_id')}</span>
+                <span className={styles.traceInfoValue}>{traceLogLine.requestId || '-'}</span>
+              </div>
+              <div className={styles.traceInfoItem}>
+                <span className={styles.traceInfoLabel}>{t('logs.trace_method')}</span>
+                <span className={styles.traceInfoValue}>{traceLogLine.method || '-'}</span>
+              </div>
+              <div className={styles.traceInfoItem}>
+                <span className={styles.traceInfoLabel}>{t('logs.trace_path')}</span>
+                <span className={styles.traceInfoValue}>{traceLogLine.path || '-'}</span>
+              </div>
+              <div className={styles.traceInfoItem}>
+                <span className={styles.traceInfoLabel}>{t('logs.trace_status_code')}</span>
+                <span className={styles.traceInfoValue}>
+                  {typeof traceLogLine.statusCode === 'number' ? traceLogLine.statusCode : '-'}
+                </span>
+              </div>
+              <div className={styles.traceInfoItem}>
+                <span className={styles.traceInfoLabel}>{t('logs.trace_latency')}</span>
+                <span className={styles.traceInfoValue}>{traceLogLine.latency || '-'}</span>
+              </div>
+              <div className={styles.traceInfoItem}>
+                <span className={styles.traceInfoLabel}>{t('logs.trace_ip')}</span>
+                <span className={styles.traceInfoValue}>{traceLogLine.ip || '-'}</span>
+              </div>
+              <div className={styles.traceInfoItem}>
+                <span className={styles.traceInfoLabel}>{t('logs.trace_timestamp')}</span>
+                <span className={styles.traceInfoValue}>{traceLogLine.timestamp || '-'}</span>
+              </div>
+              <div className={`${styles.traceInfoItem} ${styles.traceInfoItemWide}`}>
+                <span className={styles.traceInfoLabel}>{t('logs.trace_message')}</span>
+                <span className={styles.traceInfoValue}>{traceLogLine.message || '-'}</span>
+              </div>
+            </div>
+
+            <h3 className={styles.traceSectionTitle}>{t('logs.trace_candidates_title')}</h3>
+            {traceLoading ? (
+              <div className="hint">{t('logs.trace_loading')}</div>
+            ) : traceError ? (
+              <div className="error-box">{traceError}</div>
+            ) : traceCandidates.length === 0 ? (
+              <div className="hint">{t('logs.trace_no_match')}</div>
+            ) : (
+              <div className={styles.traceCandidates}>
+                {traceCandidates.map((candidate) => {
+                  const confidenceClass =
+                    candidate.confidence === 'high'
+                      ? styles.traceConfidenceHigh
+                      : candidate.confidence === 'medium'
+                        ? styles.traceConfidenceMedium
+                        : styles.traceConfidenceLow;
+                  const sourceInfo = resolveTraceSourceInfo(
+                    String(candidate.detail.source ?? ''),
+                    candidate.detail.auth_index
+                  );
+                  return (
+                    <div
+                      key={`${candidate.detail.__endpoint}-${candidate.detail.__modelName}-${candidate.detail.timestamp}-${candidate.detail.source}`}
+                      className={styles.traceCandidate}
+                    >
+                      <div className={styles.traceCandidateHeader}>
+                        <span className={`${styles.traceConfidenceBadge} ${confidenceClass}`}>
+                          {t(`logs.trace_confidence_${candidate.confidence}`)}
+                        </span>
+                        <span className={styles.traceScore}>
+                          {t('logs.trace_score', { score: candidate.score })}
+                        </span>
+                        {candidate.timeDeltaMs !== null && (
+                          <span className={styles.traceDelta}>
+                            {t('logs.trace_delta_seconds', {
+                              seconds: (candidate.timeDeltaMs / 1000).toFixed(2)
+                            })}
+                          </span>
+                        )}
+                      </div>
+                      <div className={styles.traceCandidateGrid}>
+                        <div className={styles.traceInfoItem}>
+                          <span className={styles.traceInfoLabel}>{t('logs.trace_endpoint')}</span>
+                          <span className={styles.traceInfoValue}>{candidate.detail.__endpoint}</span>
+                        </div>
+                        <div className={styles.traceInfoItem}>
+                          <span className={styles.traceInfoLabel}>{t('logs.trace_model')}</span>
+                          <span className={styles.traceInfoValue}>{candidate.detail.__modelName || '-'}</span>
+                        </div>
+                        <div className={styles.traceInfoItem}>
+                          <span className={styles.traceInfoLabel}>{t('logs.trace_source')}</span>
+                          <span
+                            className={styles.traceInfoValue}
+                            title={String(candidate.detail.source || '-')}
+                          >
+                            <span>{sourceInfo.displayName}</span>
+                            {sourceInfo.type && (
+                              <span className={styles.traceSourceType}>{sourceInfo.type}</span>
+                            )}
+                          </span>
+                        </div>
+                        <div className={styles.traceInfoItem}>
+                          <span className={styles.traceInfoLabel}>{t('logs.trace_auth_index')}</span>
+                          <span className={styles.traceInfoValue}>
+                            {candidate.detail.auth_index ?? '-'}
+                          </span>
+                        </div>
+                        <div className={styles.traceInfoItem}>
+                          <span className={styles.traceInfoLabel}>{t('logs.trace_timestamp')}</span>
+                          <span className={styles.traceInfoValue}>
+                            {candidate.detail.timestamp || '-'}
+                          </span>
+                        </div>
+                        <div className={styles.traceInfoItem}>
+                          <span className={styles.traceInfoLabel}>{t('logs.trace_result')}</span>
+                          <span className={styles.traceInfoValue}>
+                            {candidate.detail.failed ? t('stats.failure') : t('stats.success')}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={Boolean(requestLogId)}

@@ -2,12 +2,13 @@ import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { providersApi } from '@/services/api';
 import { useAuthStore, useClaudeEditDraftStore, useConfigStore, useNotificationStore } from '@/stores';
 import type { ProviderKeyConfig } from '@/types';
 import type { ModelInfo } from '@/utils/models';
 import type { ModelEntry, ProviderFormState } from '@/components/providers/types';
-import { buildHeaderObject, headersToEntries } from '@/utils/headers';
+import { buildHeaderObject, headersToEntries, type HeaderEntry } from '@/utils/headers';
 import { excludedModelsToText, parseExcludedModels } from '@/components/providers/utils';
 import { modelsToEntries } from '@/components/ui/modelInputListUtils';
 
@@ -39,6 +40,7 @@ export type ClaudeEditOutletContext = {
 
 const buildEmptyForm = (): ProviderFormState => ({
   apiKey: '',
+  priority: undefined,
   prefix: '',
   baseUrl: '',
   proxyUrl: '',
@@ -60,6 +62,59 @@ const getErrorMessage = (err: unknown) => {
   if (typeof err === 'string') return err;
   return '';
 };
+
+const normalizeHeaderEntries = (entries: HeaderEntry[]) =>
+  (entries ?? [])
+    .map((entry) => ({
+      key: String(entry?.key ?? '').trim(),
+      value: String(entry?.value ?? '').trim(),
+    }))
+    .filter((entry) => entry.key || entry.value)
+    .sort((a, b) => {
+      const byKey = a.key.toLowerCase().localeCompare(b.key.toLowerCase());
+      if (byKey !== 0) return byKey;
+      return a.value.localeCompare(b.value);
+    });
+
+const normalizeClaudeModelEntries = (entries: Array<{ name: string; alias: string }>) =>
+  (entries ?? []).reduce<Array<{ name: string; alias: string }>>((acc, entry) => {
+    const name = String(entry?.name ?? '').trim();
+    let alias = String(entry?.alias ?? '').trim();
+    if (name) {
+      alias = alias || name;
+    }
+    if (!name && !alias) return acc;
+    acc.push({ name, alias });
+    return acc;
+  }, []);
+
+const normalizeCloakConfig = (cloak: ProviderFormState['cloak']) => {
+  if (!cloak) return null;
+  const mode = String(cloak.mode ?? '').trim().toLowerCase() || 'auto';
+  const strictMode = Boolean(cloak.strictMode);
+  const sensitiveWords = Array.isArray(cloak.sensitiveWords)
+    ? cloak.sensitiveWords.map((word) => String(word ?? '').trim()).filter(Boolean)
+    : [];
+  return {
+    mode,
+    strictMode,
+    sensitiveWords: sensitiveWords.length ? sensitiveWords : null,
+  };
+};
+
+const buildClaudeSignature = (form: ProviderFormState) =>
+  JSON.stringify({
+    apiKey: String(form.apiKey ?? '').trim(),
+    priority:
+      form.priority !== undefined && Number.isFinite(form.priority) ? Math.trunc(form.priority) : null,
+    prefix: String(form.prefix ?? '').trim(),
+    baseUrl: String(form.baseUrl ?? '').trim(),
+    proxyUrl: String(form.proxyUrl ?? '').trim(),
+    headers: normalizeHeaderEntries(form.headers),
+    models: normalizeClaudeModelEntries(form.modelEntries),
+    excludedModels: parseExcludedModels(form.excludedText ?? ''),
+    cloak: normalizeCloakConfig(form.cloak),
+  });
 
 export function AiProvidersClaudeEditLayout() {
   const { t } = useTranslation();
@@ -92,9 +147,10 @@ export function AiProvidersClaudeEditLayout() {
   }, [editIndex, invalidIndexParam, params.index]);
 
   const draft = useClaudeEditDraftStore((state) => state.drafts[draftKey]);
-  const ensureDraft = useClaudeEditDraftStore((state) => state.ensureDraft);
+  const acquireDraft = useClaudeEditDraftStore((state) => state.acquireDraft);
+  const releaseDraft = useClaudeEditDraftStore((state) => state.releaseDraft);
   const initDraft = useClaudeEditDraftStore((state) => state.initDraft);
-  const clearDraft = useClaudeEditDraftStore((state) => state.clearDraft);
+  const setDraftBaselineSignature = useClaudeEditDraftStore((state) => state.setDraftBaselineSignature);
   const setDraftForm = useClaudeEditDraftStore((state) => state.setDraftForm);
   const setDraftTestModel = useClaudeEditDraftStore((state) => state.setDraftTestModel);
   const setDraftTestStatus = useClaudeEditDraftStore((state) => state.setDraftTestStatus);
@@ -146,18 +202,18 @@ export function AiProvidersClaudeEditLayout() {
   );
 
   useEffect(() => {
-    ensureDraft(draftKey);
-  }, [draftKey, ensureDraft]);
+    acquireDraft(draftKey);
+    return () => releaseDraft(draftKey);
+  }, [acquireDraft, draftKey, releaseDraft]);
 
   const handleBack = useCallback(() => {
-    clearDraft(draftKey);
     const state = location.state as LocationState;
     if (state?.fromAiProviders) {
       navigate(-1);
       return;
     }
     navigate('/ai-providers', { replace: true });
-  }, [clearDraft, draftKey, location.state, navigate]);
+  }, [location.state, navigate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,7 +254,9 @@ export function AiProvidersClaudeEditLayout() {
         excludedText: excludedModelsToText(initialData.excludedModels),
       };
       const available = seededForm.modelEntries.map((entry) => entry.name.trim()).filter(Boolean);
+      const baselineSignature = buildClaudeSignature(seededForm);
       initDraft(draftKey, {
+        baselineSignature,
         form: seededForm,
         testModel: available[0] || '',
         testStatus: 'idle',
@@ -207,8 +265,10 @@ export function AiProvidersClaudeEditLayout() {
       return;
     }
 
+    const emptyForm = buildEmptyForm();
     initDraft(draftKey, {
-      form: buildEmptyForm(),
+      baselineSignature: buildClaudeSignature(emptyForm),
+      form: emptyForm,
       testModel: '',
       testStatus: 'idle',
       testMessage: '',
@@ -216,6 +276,33 @@ export function AiProvidersClaudeEditLayout() {
   }, [draft?.initialized, draftKey, initDraft, initialData, loading]);
 
   const resolvedLoading = !draft?.initialized;
+  const currentSignature = useMemo(() => buildClaudeSignature(form), [form]);
+  const baselineSignature = draft?.baselineSignature ?? '';
+  const isDirty = Boolean(draft?.initialized) && baselineSignature !== currentSignature;
+  const editorRootPath = useMemo(() => {
+    if (hasIndexParam) {
+      return `/ai-providers/claude/${params.index ?? ''}`;
+    }
+    return '/ai-providers/claude/new';
+  }, [hasIndexParam, params.index]);
+  const canGuard = !resolvedLoading && !saving && !invalidIndexParam && !invalidIndex;
+
+  const { allowNextNavigation } = useUnsavedChangesGuard({
+    enabled: canGuard,
+    shouldBlock: ({ nextLocation }) => {
+      const nextPath = nextLocation.pathname;
+      const isWithinRoot =
+        nextPath === editorRootPath || nextPath.startsWith(`${editorRootPath}/`);
+      return isDirty && !isWithinRoot;
+    },
+    dialog: {
+      title: t('common.unsaved_changes_title'),
+      message: t('common.unsaved_changes_message'),
+      confirmText: t('common.leave'),
+      cancelText: t('common.stay'),
+      variant: 'danger',
+    },
+  });
 
   useEffect(() => {
     if (resolvedLoading) return;
@@ -279,6 +366,7 @@ export function AiProvidersClaudeEditLayout() {
     try {
       const payload: ProviderKeyConfig = {
         apiKey: form.apiKey.trim(),
+        priority: form.priority !== undefined ? Math.trunc(form.priority) : undefined,
         prefix: form.prefix?.trim() || undefined,
         baseUrl: (form.baseUrl ?? '').trim() || undefined,
         proxyUrl: form.proxyUrl?.trim() || undefined,
@@ -292,6 +380,7 @@ export function AiProvidersClaudeEditLayout() {
           })
           .filter(Boolean) as ProviderKeyConfig['models'],
         excludedModels: parseExcludedModels(form.excludedText),
+        cloak: form.cloak,
       };
 
       const nextList =
@@ -307,6 +396,8 @@ export function AiProvidersClaudeEditLayout() {
         editIndex !== null ? t('notification.claude_config_updated') : t('notification.claude_config_added'),
         'success'
       );
+      allowNextNavigation();
+      setDraftBaselineSignature(draftKey, buildClaudeSignature(form));
       handleBack();
     } catch (err: unknown) {
       showNotification(`${t('notification.update_failed')}: ${getErrorMessage(err)}`, 'error');
@@ -314,8 +405,10 @@ export function AiProvidersClaudeEditLayout() {
       setSaving(false);
     }
   }, [
+    allowNextNavigation,
     clearCache,
     configs,
+    draftKey,
     disableControls,
     editIndex,
     form,
@@ -323,6 +416,7 @@ export function AiProvidersClaudeEditLayout() {
     invalidIndex,
     invalidIndexParam,
     resolvedLoading,
+    setDraftBaselineSignature,
     saving,
     showNotification,
     t,
