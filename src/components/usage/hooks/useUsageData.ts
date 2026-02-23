@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { USAGE_STATS_STALE_TIME_MS, useNotificationStore, useUsageStatsStore } from '@/stores';
 import { usageApi } from '@/services/api/usage';
+import { downloadBlob } from '@/utils/download';
 import { loadModelPrices, saveModelPrices, type ModelPrice } from '@/utils/usage';
 
 export interface UsagePayload {
@@ -48,7 +49,7 @@ export function useUsageData(): UseUsageDataReturn {
   }, [loadUsageStats]);
 
   useEffect(() => {
-    void loadUsageStats({ staleTimeMs: USAGE_STATS_STALE_TIME_MS });
+    void loadUsageStats({ staleTimeMs: USAGE_STATS_STALE_TIME_MS }).catch(() => {});
     setModelPrices(loadModelPrices());
   }, [loadUsageStats]);
 
@@ -62,13 +63,10 @@ export function useUsageData(): UseUsageDataReturn {
         ? new Date().toISOString()
         : exportedAt.toISOString();
       const filename = `usage-export-${safeTimestamp.replace(/[:.]/g, '-')}.json`;
-      const blob = new Blob([JSON.stringify(data ?? {}, null, 2)], { type: 'application/json' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      link.click();
-      window.URL.revokeObjectURL(url);
+      downloadBlob({
+        filename,
+        blob: new Blob([JSON.stringify(data ?? {}, null, 2)], { type: 'application/json' })
+      });
       showNotification(t('usage_stats.export_success'), 'success');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : '';
@@ -111,7 +109,15 @@ export function useUsageData(): UseUsageDataReturn {
         }),
         'success'
       );
-      await loadUsageStats({ force: true, staleTimeMs: USAGE_STATS_STALE_TIME_MS });
+      try {
+        await loadUsageStats({ force: true, staleTimeMs: USAGE_STATS_STALE_TIME_MS });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : '';
+        showNotification(
+          `${t('notification.refresh_failed')}${message ? `: ${message}` : ''}`,
+          'error'
+        );
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : '';
       showNotification(

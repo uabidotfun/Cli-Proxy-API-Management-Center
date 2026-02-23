@@ -2,14 +2,15 @@ import { useMemo, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import {
-  computeKeyStats,
   collectUsageDetails,
   buildCandidateUsageSourceIds,
-  formatCompactNumber
+  formatCompactNumber,
+  normalizeAuthIndex
 } from '@/utils/usage';
 import { authFilesApi } from '@/services/api/authFiles';
 import type { GeminiKeyConfig, ProviderKeyConfig, OpenAIProviderConfig } from '@/types';
 import type { AuthFileItem } from '@/types/authFile';
+import type { CredentialInfo } from '@/types/sourceInfo';
 import type { UsagePayload } from './hooks/useUsageData';
 import styles from '@/pages/UsagePage.module.scss';
 
@@ -21,11 +22,6 @@ export interface CredentialStatsCardProps {
   codexConfigs: ProviderKeyConfig[];
   vertexConfigs: ProviderKeyConfig[];
   openaiProviders: OpenAIProviderConfig[];
-}
-
-interface CredentialInfo {
-  name: string;
-  type: string;
 }
 
 interface CredentialRow {
@@ -41,17 +37,6 @@ interface CredentialRow {
 interface CredentialBucket {
   success: number;
   failure: number;
-}
-
-function normalizeAuthIndexValue(value: unknown): string | null {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value.toString();
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed || null;
-  }
-  return null;
 }
 
 export function CredentialStatsCard({
@@ -78,7 +63,7 @@ export function CredentialStatsCard({
         const map = new Map<string, CredentialInfo>();
         files.forEach((file) => {
           const rawAuthIndex = file['auth_index'] ?? file.authIndex;
-          const key = normalizeAuthIndexValue(rawAuthIndex);
+          const key = normalizeAuthIndex(rawAuthIndex);
           if (key) {
             map.set(key, {
               name: file.name || key,
@@ -96,13 +81,48 @@ export function CredentialStatsCard({
   // Auth files are used purely for name resolution of unmatched source IDs.
   const rows = useMemo((): CredentialRow[] => {
     if (!usage) return [];
-    const { bySource } = computeKeyStats(usage);
     const details = collectUsageDetails(usage);
+    const bySource: Record<string, CredentialBucket> = {};
     const result: CredentialRow[] = [];
     const consumedSourceIds = new Set<string>();
     const authIndexToRowIndex = new Map<string, number>();
     const sourceToAuthIndex = new Map<string, string>();
+    const sourceToAuthFile = new Map<string, CredentialInfo>();
     const fallbackByAuthIndex = new Map<string, CredentialBucket>();
+
+    details.forEach((detail) => {
+      const authIdx = normalizeAuthIndex(detail.auth_index);
+      const source = detail.source;
+      const isFailed = detail.failed === true;
+
+      if (!source) {
+        if (!authIdx) return;
+        const fallback = fallbackByAuthIndex.get(authIdx) ?? { success: 0, failure: 0 };
+        if (isFailed) {
+          fallback.failure += 1;
+        } else {
+          fallback.success += 1;
+        }
+        fallbackByAuthIndex.set(authIdx, fallback);
+        return;
+      }
+
+      const bucket = bySource[source] ?? { success: 0, failure: 0 };
+      if (isFailed) {
+        bucket.failure += 1;
+      } else {
+        bucket.success += 1;
+      }
+      bySource[source] = bucket;
+
+      if (authIdx && !sourceToAuthIndex.has(source)) {
+        sourceToAuthIndex.set(source, authIdx);
+      }
+      if (authIdx && !sourceToAuthFile.has(source)) {
+        const mapped = authFileMap.get(authIdx);
+        if (mapped) sourceToAuthFile.set(source, mapped);
+      }
+    });
 
     const mergeBucketToRow = (index: number, bucket: CredentialBucket) => {
       const target = result[index];
@@ -188,33 +208,6 @@ export function CredentialStatsCard({
           total,
           successRate: (success / total) * 100,
         });
-      }
-    });
-
-    // Build source → auth file name mapping for remaining unmatched entries.
-    // Also collect fallback stats for details without source but with auth_index.
-    const sourceToAuthFile = new Map<string, CredentialInfo>();
-    details.forEach((d) => {
-      const authIdx = normalizeAuthIndexValue(d.auth_index);
-      if (!d.source) {
-        if (!authIdx) return;
-        const fallback = fallbackByAuthIndex.get(authIdx) ?? { success: 0, failure: 0 };
-        if (d.failed === true) {
-          fallback.failure += 1;
-        } else {
-          fallback.success += 1;
-        }
-        fallbackByAuthIndex.set(authIdx, fallback);
-        return;
-      }
-
-      if (!authIdx || consumedSourceIds.has(d.source)) return;
-      if (!sourceToAuthIndex.has(d.source)) {
-        sourceToAuthIndex.set(d.source, authIdx);
-      }
-      if (!sourceToAuthFile.has(d.source)) {
-        const mapped = authFileMap.get(authIdx);
-        if (mapped) sourceToAuthFile.set(d.source, mapped);
       }
     });
 

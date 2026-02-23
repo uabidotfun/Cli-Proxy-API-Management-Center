@@ -7,11 +7,14 @@ import { Select } from '@/components/ui/Select';
 import { authFilesApi } from '@/services/api/authFiles';
 import type { GeminiKeyConfig, ProviderKeyConfig, OpenAIProviderConfig } from '@/types';
 import type { AuthFileItem } from '@/types/authFile';
+import type { CredentialInfo } from '@/types/sourceInfo';
+import { buildSourceInfoMap, resolveSourceDisplay } from '@/utils/sourceResolver';
 import {
-  buildCandidateUsageSourceIds,
   collectUsageDetails,
-  extractTotalTokens
+  extractTotalTokens,
+  normalizeAuthIndex
 } from '@/utils/usage';
+import { downloadBlob } from '@/utils/download';
 import styles from '@/pages/UsagePage.module.scss';
 
 const ALL_FILTER = '__all__';
@@ -53,39 +56,10 @@ const toNumber = (value: unknown): number => {
 
 const encodeCsv = (value: string | number): string => {
   const text = String(value ?? '');
-  return `"${text.replace(/"/g, '""')}"`;
+  const trimmedLeft = text.replace(/^\s+/, '');
+  const safeText = trimmedLeft && /^[=+\-@]/.test(trimmedLeft) ? `'${text}` : text;
+  return `"${safeText.replace(/"/g, '""')}"`;
 };
-
-const downloadFile = (filename: string, content: string, mimeType: string) => {
-  const blob = new Blob([content], { type: mimeType });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  window.URL.revokeObjectURL(url);
-};
-
-type CredentialInfo = {
-  name: string;
-  type: string;
-};
-
-type SourceInfo = {
-  displayName: string;
-  type: string;
-};
-
-function normalizeAuthIndexValue(value: unknown): string | null {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value.toString();
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed || null;
-  }
-  return null;
-}
 
 export function RequestEventsDetailsCard({
   usage,
@@ -113,7 +87,7 @@ export function RequestEventsDetailsCard({
         if (!Array.isArray(files)) return;
         const map = new Map<string, CredentialInfo>();
         files.forEach((file) => {
-          const key = normalizeAuthIndexValue(file['auth_index'] ?? file.authIndex);
+          const key = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
           if (!key) return;
           map.set(key, {
             name: file.name || key,
@@ -128,83 +102,28 @@ export function RequestEventsDetailsCard({
     };
   }, []);
 
-  const sourceInfoMap = useMemo(() => {
-    const map = new Map<string, SourceInfo>();
-
-    const registerSource = (sourceId: string, displayName: string, type: string) => {
-      if (!sourceId || !displayName) return;
-      if (map.has(sourceId)) return;
-      map.set(sourceId, { displayName, type });
-    };
-
-    const registerCandidates = (
-      displayName: string,
-      type: string,
-      candidates: string[]
-    ) => {
-      candidates.forEach((sourceId) => registerSource(sourceId, displayName, type));
-    };
-
-    geminiKeys.forEach((config, index) => {
-      const displayName = config.prefix?.trim() || `Gemini #${index + 1}`;
-      registerCandidates(
-        displayName,
-        'gemini',
-        buildCandidateUsageSourceIds({ apiKey: config.apiKey, prefix: config.prefix })
-      );
-    });
-
-    claudeConfigs.forEach((config, index) => {
-      const displayName = config.prefix?.trim() || `Claude #${index + 1}`;
-      registerCandidates(
-        displayName,
-        'claude',
-        buildCandidateUsageSourceIds({ apiKey: config.apiKey, prefix: config.prefix })
-      );
-    });
-
-    codexConfigs.forEach((config, index) => {
-      const displayName = config.prefix?.trim() || `Codex #${index + 1}`;
-      registerCandidates(
-        displayName,
-        'codex',
-        buildCandidateUsageSourceIds({ apiKey: config.apiKey, prefix: config.prefix })
-      );
-    });
-
-    vertexConfigs.forEach((config, index) => {
-      const displayName = config.prefix?.trim() || `Vertex #${index + 1}`;
-      registerCandidates(
-        displayName,
-        'vertex',
-        buildCandidateUsageSourceIds({ apiKey: config.apiKey, prefix: config.prefix })
-      );
-    });
-
-    openaiProviders.forEach((provider, providerIndex) => {
-      const displayName = provider.prefix?.trim() || provider.name || `OpenAI #${providerIndex + 1}`;
-      const candidates = new Set<string>();
-      buildCandidateUsageSourceIds({ prefix: provider.prefix }).forEach((sourceId) =>
-        candidates.add(sourceId)
-      );
-      (provider.apiKeyEntries || []).forEach((entry) => {
-        buildCandidateUsageSourceIds({ apiKey: entry.apiKey }).forEach((sourceId) =>
-          candidates.add(sourceId)
-        );
-      });
-      registerCandidates(displayName, 'openai', Array.from(candidates));
-    });
-
-    return map;
-  }, [claudeConfigs, codexConfigs, geminiKeys, openaiProviders, vertexConfigs]);
+  const sourceInfoMap = useMemo(
+    () =>
+      buildSourceInfoMap({
+        geminiApiKeys: geminiKeys,
+        claudeApiKeys: claudeConfigs,
+        codexApiKeys: codexConfigs,
+        vertexApiKeys: vertexConfigs,
+        openaiCompatibility: openaiProviders,
+      }),
+    [claudeConfigs, codexConfigs, geminiKeys, openaiProviders, vertexConfigs]
+  );
 
   const rows = useMemo<RequestEventRow[]>(() => {
     const details = collectUsageDetails(usage);
 
     return details
       .map((detail, index) => {
-        const timestamp = typeof detail.timestamp === 'string' ? detail.timestamp : '';
-        const timestampMs = Date.parse(timestamp);
+        const timestamp = detail.timestamp;
+        const timestampMs =
+          typeof detail.__timestampMs === 'number' && detail.__timestampMs > 0
+            ? detail.__timestampMs
+            : Date.parse(timestamp);
         const date = Number.isNaN(timestampMs) ? null : new Date(timestampMs);
         const sourceRaw = String(detail.source ?? '').trim();
         const authIndexRaw = detail.auth_index as unknown;
@@ -212,13 +131,9 @@ export function RequestEventsDetailsCard({
           authIndexRaw === null || authIndexRaw === undefined || authIndexRaw === ''
             ? '-'
             : String(authIndexRaw);
-        const normalizedAuthIndex = normalizeAuthIndexValue(authIndexRaw);
-        const sourceInfo = sourceInfoMap.get(sourceRaw);
-        const authInfo = normalizedAuthIndex ? authFileMap.get(normalizedAuthIndex) : undefined;
-        const source = sourceInfo?.displayName
-          || authInfo?.name
-          || (sourceRaw.startsWith('t:') ? sourceRaw.slice(2) : sourceRaw || '-');
-        const sourceType = sourceInfo?.type || authInfo?.type || '';
+        const sourceInfo = resolveSourceDisplay(sourceRaw, authIndexRaw, sourceInfoMap, authFileMap);
+        const source = sourceInfo.displayName;
+        const sourceType = sourceInfo.type;
         const model = String(detail.__modelName ?? '').trim() || '-';
         const inputTokens = Math.max(toNumber(detail.tokens?.input_tokens), 0);
         const outputTokens = Math.max(toNumber(detail.tokens?.output_tokens), 0);
@@ -370,7 +285,10 @@ export function RequestEventsDetailsCard({
 
     const content = [csvHeader.join(','), ...csvRows].join('\n');
     const fileTime = new Date().toISOString().replace(/[:.]/g, '-');
-    downloadFile(`usage-events-${fileTime}.csv`, content, 'text/csv;charset=utf-8');
+    downloadBlob({
+      filename: `usage-events-${fileTime}.csv`,
+      blob: new Blob([content], { type: 'text/csv;charset=utf-8' })
+    });
   };
 
   const handleExportJson = () => {
@@ -394,7 +312,10 @@ export function RequestEventsDetailsCard({
 
     const content = JSON.stringify(payload, null, 2);
     const fileTime = new Date().toISOString().replace(/[:.]/g, '-');
-    downloadFile(`usage-events-${fileTime}.json`, content, 'application/json;charset=utf-8');
+    downloadBlob({
+      filename: `usage-events-${fileTime}.json`,
+      blob: new Blob([content], { type: 'application/json;charset=utf-8' })
+    });
   };
 
   return (

@@ -13,7 +13,7 @@ import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { apiCallApi, getApiCallErrorMessage } from '@/services/api';
 import { useNotificationStore } from '@/stores';
 import { buildHeaderObject } from '@/utils/headers';
-import { buildClaudeMessagesEndpoint, parseExcludedModels } from '@/components/providers/utils';
+import { buildClaudeMessagesEndpoint, parseTextList } from '@/components/providers/utils';
 import type { ClaudeEditOutletContext } from './AiProvidersClaudeEditLayout';
 import styles from './AiProvidersPage.module.scss';
 import layoutStyles from './AiProvidersEditLayout.module.scss';
@@ -71,6 +71,7 @@ export function AiProvidersClaudeEditPage() {
 
   const swipeRef = useEdgeSwipeBack({ onBack: handleBack });
   const [isTesting, setIsTesting] = useState(false);
+  const lastCloakConfigRef = useRef<typeof form.cloak>(null);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -81,6 +82,11 @@ export function AiProvidersClaudeEditPage() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleBack]);
+
+  useEffect(() => {
+    if (!form.cloak) return;
+    lastCloakConfigRef.current = form.cloak;
+  }, [form.cloak]);
 
   const canSave =
     !disableControls && !loading && !saving && !invalidIndexParam && !invalidIndex && !isTesting;
@@ -266,10 +272,28 @@ export function AiProvidersClaudeEditPage() {
       onBack={handleBack}
       backLabel={t('common.back')}
       backAriaLabel={t('common.back')}
-      rightAction={
-        <Button size="sm" onClick={() => void handleSave()} loading={saving} disabled={!canSave}>
-          {t('common.save')}
-        </Button>
+      hideTopBarBackButton
+      hideTopBarRightAction
+      floatingAction={
+        <div className={layoutStyles.floatingActions}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleBack}
+            className={layoutStyles.floatingBackButton}
+          >
+            {t('common.back')}
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => void handleSave()}
+            loading={saving}
+            disabled={!canSave}
+            className={layoutStyles.floatingSaveButton}
+          >
+            {t('common.save')}
+          </Button>
+        </div>
       }
       isLoading={loading}
       loadingLabel={t('common.loading')}
@@ -460,16 +484,27 @@ export function AiProvidersClaudeEditPage() {
                   <ToggleSwitch
                     checked={Boolean(form.cloak)}
                     onChange={(enabled) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        cloak: enabled
-                          ? {
-                              mode: (prev.cloak?.mode ?? 'auto').trim() || 'auto',
-                              strictMode: prev.cloak?.strictMode ?? false,
-                              sensitiveWords: prev.cloak?.sensitiveWords ?? [],
-                            }
-                          : undefined,
-                      }))
+                      setForm((prev) => {
+                        if (!enabled) {
+                          if (prev.cloak) {
+                            lastCloakConfigRef.current = prev.cloak;
+                          }
+                          return { ...prev, cloak: undefined };
+                        }
+
+                        const restored = prev.cloak
+                          ?? lastCloakConfigRef.current
+                          ?? { mode: 'auto', strictMode: false, sensitiveWords: [] };
+                        const mode = String(restored.mode ?? 'auto').trim() || 'auto';
+                        return {
+                          ...prev,
+                          cloak: {
+                            mode,
+                            strictMode: restored.strictMode ?? false,
+                            sensitiveWords: restored.sensitiveWords ?? [],
+                          },
+                        };
+                      })
                     }
                     disabled={saving || disableControls || isTesting}
                     ariaLabel={t('ai_providers.claude_cloak_toggle_aria')}
@@ -527,7 +562,7 @@ export function AiProvidersClaudeEditPage() {
                       placeholder={t('ai_providers.claude_cloak_sensitive_words_placeholder')}
                       value={(form.cloak.sensitiveWords ?? []).join('\n')}
                       onChange={(e) => {
-                        const nextWords = parseExcludedModels(e.target.value);
+                        const nextWords = parseTextList(e.target.value);
                         setForm((prev) => ({
                           ...prev,
                           cloak: {
