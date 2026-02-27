@@ -38,7 +38,7 @@ import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFi
 import { readAuthFilesUiState, writeAuthFilesUiState } from '@/features/authFiles/uiState';
 import { useAuthStore, useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
-import { ANTIGRAVITY_CONFIG, CODEX_CONFIG, GEMINI_CLI_CONFIG } from '@/components/quota';
+import { ANTIGRAVITY_CONFIG, CODEX_CONFIG, GEMINI_CLI_CONFIG, KIMI_CONFIG } from '@/components/quota';
 import { getStatusFromError } from '@/utils/quota';
 import styles from './AuthFilesPage.module.scss';
 
@@ -219,6 +219,7 @@ export function AuthFilesPage() {
         antigravity: ANTIGRAVITY_CONFIG,
         codex: CODEX_CONFIG,
         'gemini-cli': GEMINI_CLI_CONFIG,
+        kimi: KIMI_CONFIG,
       } as const;
       const config = configMap[quotaType] as unknown as {
         fetchQuota: (f: AuthFileItem, tr: typeof t) => Promise<unknown>;
@@ -231,6 +232,7 @@ export function AuthFilesPage() {
         antigravity: 'setAntigravityQuota',
         codex: 'setCodexQuota',
         'gemini-cli': 'setGeminiCliQuota',
+        kimi: 'setKimiQuota',
       } as const;
       const update = (updater: (prev: Record<string, unknown>) => Record<string, unknown>) => {
         const setter = useQuotaStore.getState()[setterMap[quotaType]];
