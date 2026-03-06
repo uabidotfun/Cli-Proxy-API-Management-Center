@@ -70,15 +70,47 @@ export const ANTIGRAVITY_REQUEST_HEADERS = {
 };
 
 export const ANTIGRAVITY_QUOTA_GROUPS: AntigravityQuotaGroupDefinition[] = [
+  // 这里与 antigravity 最新 usage 模型保持一致，避免前端继续按旧模型名聚合导致额度卡片缺失。
   {
     id: 'claude-gpt',
     label: 'Claude/GPT',
-    identifiers: [
-      'claude-sonnet-4-5-thinking',
-      'claude-opus-4-5-thinking',
-      'claude-sonnet-4-5',
-      'gpt-oss-120b-medium',
-    ],
+    identifiers: ['claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gpt-oss-120b-medium'],
+  },
+  {
+    id: 'gemini-3-pro',
+    label: 'Gemini 3 Pro',
+    identifiers: ['gemini-3-pro-high', 'gemini-3-pro-low'],
+  },
+  {
+    id: 'gemini-3-1-pro-series',
+    label: 'Gemini 3.1 Pro Series',
+    identifiers: ['gemini-3.1-pro-high', 'gemini-3.1-pro-low'],
+  },
+  {
+    id: 'gemini-2-5-flash',
+    label: 'Gemini 2.5 Flash',
+    identifiers: ['gemini-2.5-flash', 'gemini-2.5-flash-thinking'],
+  },
+  {
+    id: 'gemini-2-5-flash-lite',
+    label: 'Gemini 2.5 Flash Lite',
+    identifiers: ['gemini-2.5-flash-lite'],
+  },
+  {
+    id: 'gemini-2-5-cu',
+    label: 'Gemini 2.5 CU',
+    identifiers: ['rev19-uic3-1p'],
+  },
+  {
+    id: 'gemini-3-flash',
+    label: 'Gemini 3 Flash',
+    identifiers: ['gemini-3-flash'],
+  },
+  {
+    id: 'gemini-image',
+    label: 'gemini-3.1-flash-image',
+    identifiers: ['gemini-3.1-flash-image'],
+    labelFromModel: true,
   },
 ];
 

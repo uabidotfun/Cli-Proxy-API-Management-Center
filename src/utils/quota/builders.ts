@@ -184,6 +184,10 @@ export function buildAntigravityQuotaGroups(
   models: AntigravityModelsPayload
 ): AntigravityQuotaGroup[] {
   const groups: AntigravityQuotaGroup[] = [];
+  // 先按分组 id 建索引，避免后续为控制展示顺序和重置时间联动时重复遍历定义。
+  const definitions = new Map(
+    ANTIGRAVITY_QUOTA_GROUPS.map((definition) => [definition.id, definition] as const)
+  );
 
   const buildGroup = (
     def: AntigravityQuotaGroupDefinition,
@@ -224,12 +228,29 @@ export function buildAntigravityQuotaGroups(
     };
   };
 
-  for (const def of ANTIGRAVITY_QUOTA_GROUPS) {
-    const group = buildGroup(def);
+  // 按固定顺序追加分组，并让 image 组复用 Pro 组的重置时间，避免单独展示时缺少可读的刷新提示。
+  const appendGroup = (
+    id: string,
+    overrideResetTime?: string
+  ): AntigravityQuotaGroup | null => {
+    const definition = definitions.get(id);
+    if (!definition) return null;
+    const group = buildGroup(definition, overrideResetTime);
     if (group) {
       groups.push(group);
     }
-  }
+    return group;
+  };
+
+  appendGroup('claude-gpt');
+  const gemini31ProGroup = appendGroup('gemini-3-1-pro-series');
+  const geminiProGroup = appendGroup('gemini-3-pro');
+  const geminiProResetTime = gemini31ProGroup?.resetTime ?? geminiProGroup?.resetTime;
+  appendGroup('gemini-2-5-flash');
+  appendGroup('gemini-2-5-flash-lite');
+  appendGroup('gemini-2-5-cu');
+  appendGroup('gemini-3-flash');
+  appendGroup('gemini-image', geminiProResetTime);
 
   return groups;
 }
