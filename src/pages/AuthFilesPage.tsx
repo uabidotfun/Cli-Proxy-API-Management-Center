@@ -49,7 +49,7 @@ import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFi
 import { readAuthFilesUiState, writeAuthFilesUiState } from '@/features/authFiles/uiState';
 import { useAuthStore, useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
-import { ANTIGRAVITY_CONFIG, CODEX_CONFIG, GEMINI_CLI_CONFIG, KIMI_CONFIG } from '@/components/quota';
+import { ANTIGRAVITY_CONFIG, CLAUDE_CONFIG, CODEX_CONFIG, GEMINI_CLI_CONFIG, KIMI_CONFIG } from '@/components/quota';
 import { getStatusFromError } from '@/utils/quota';
 import styles from './AuthFilesPage.module.scss';
 
@@ -236,8 +236,10 @@ export function AuthFilesPage() {
     async (file: AuthFileItem, quotaType: QuotaProviderType) => {
       if (isRuntimeOnlyAuthFile(file) || file.disabled) return;
 
+      // 这里必须覆盖全部配额类型，避免上游扩展 provider 后本地刷新链路遗漏分支。
       const configMap = {
         antigravity: ANTIGRAVITY_CONFIG,
+        claude: CLAUDE_CONFIG,
         codex: CODEX_CONFIG,
         'gemini-cli': GEMINI_CLI_CONFIG,
         kimi: KIMI_CONFIG,
@@ -251,6 +253,7 @@ export function AuthFilesPage() {
 
       const setterMap = {
         antigravity: 'setAntigravityQuota',
+        claude: 'setClaudeQuota',
         codex: 'setCodexQuota',
         'gemini-cli': 'setGeminiCliQuota',
         kimi: 'setKimiQuota',
