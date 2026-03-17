@@ -1,8 +1,16 @@
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { IconBot, IconCheck, IconCode, IconDownload, IconInfo, IconRefreshCw, IconTrash2 } from '@/components/ui/icons';
+import {
+  IconBot,
+  IconCode,
+  IconDownload,
+  IconInfo,
+  IconRefreshCw,
+  IconTrash2,
+} from '@/components/ui/icons';
 import { ProviderStatusBar } from '@/components/providers/ProviderStatusBar';
 import type { AuthFileItem } from '@/types';
 import { resolveAuthProvider } from '@/utils/quota';
@@ -15,6 +23,7 @@ import {
   getTypeColor,
   getTypeLabel,
   isRuntimeOnlyAuthFile,
+  parsePriorityValue,
   resolveAuthFileStats,
   type QuotaProviderType,
   type ResolvedTheme,
@@ -70,7 +79,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
     onDelete,
     onToggleStatus,
     onToggleSelect,
-    onRefreshQuota
+    onRefreshQuota,
   } = props;
 
   const fileStats = resolveAuthFileStats(file, keyStats);
@@ -105,6 +114,9 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const hasStatusWarning =
     Boolean(rawStatusMessage) && !HEALTHY_STATUS_MESSAGES.has(rawStatusMessage.toLowerCase());
 
+  const priorityValue = parsePriorityValue(file.priority ?? file['priority']);
+  const noteValue = typeof file.note === 'string' ? file.note.trim() : '';
+
   return (
     <div
       className={`${styles.fileCard} ${providerCardClass} ${selected ? styles.fileCardSelected : ''} ${file.disabled ? styles.fileCardDisabled : ''}`}
@@ -113,18 +125,14 @@ export function AuthFileCard(props: AuthFileCardProps) {
         <div className={styles.fileCardMain}>
           <div className={styles.cardHeader}>
             {!isRuntimeOnly && (
-              <button
-                type="button"
-                className={`${styles.selectionToggle} ${selected ? styles.selectionToggleActive : ''}`}
-                onClick={() => onToggleSelect(file.name)}
+              <SelectionCheckbox
+                checked={selected}
+                onChange={() => onToggleSelect(file.name)}
                 aria-label={
                   selected ? t('auth_files.batch_deselect') : t('auth_files.batch_select_all')
                 }
-                aria-pressed={selected}
                 title={selected ? t('auth_files.batch_deselect') : t('auth_files.batch_select_all')}
-              >
-                {selected && <IconCheck size={12} />}
-              </button>
+              />
             )}
             <span
               className={styles.typeBadge}
@@ -146,7 +154,19 @@ export function AuthFileCard(props: AuthFileCardProps) {
             <span>
               {t('auth_files.file_modified')}: {formatModified(file)}
             </span>
+            {priorityValue !== undefined && (
+              <span className={styles.priorityBadge}>
+                {t('auth_files.priority_display')}: <span className={styles.priorityValue}>{priorityValue}</span>
+              </span>
+            )}
           </div>
+
+          {noteValue && (
+            <div className={styles.noteText} title={noteValue}>
+              <span className={styles.noteLabel}>{t('auth_files.note_display')}: </span>
+              {noteValue}
+            </div>
+          )}
 
           {rawStatusMessage && hasStatusWarning && (
             <div className={styles.healthStatusMessage} title={rawStatusMessage}>

@@ -18,6 +18,7 @@ import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer'
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { copyToClipboard } from '@/utils/clipboard';
@@ -31,6 +32,7 @@ import {
   hasAuthFileStatusMessage,
   isRuntimeOnlyAuthFile,
   normalizeProviderKey,
+  parsePriorityValue,
   type QuotaProviderType,
   type ResolvedTheme,
 } from '@/features/authFiles/constants';
@@ -40,16 +42,36 @@ import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileMod
 import { AuthFilesPrefixProxyEditorModal } from '@/features/authFiles/components/AuthFilesPrefixProxyEditorModal';
 import { OAuthExcludedCard } from '@/features/authFiles/components/OAuthExcludedCard';
 import { OAuthModelAliasCard } from '@/features/authFiles/components/OAuthModelAliasCard';
+import iconAntigravity from '@/assets/icons/antigravity.svg';
+import iconClaude from '@/assets/icons/claude.svg';
+import iconCodex from '@/assets/icons/codex.svg';
+import iconGemini from '@/assets/icons/gemini.svg';
+import iconIflow from '@/assets/icons/iflow.svg';
+import iconKimiDark from '@/assets/icons/kimi-dark.svg';
+import iconKimiLight from '@/assets/icons/kimi-light.svg';
+import iconQwen from '@/assets/icons/qwen.svg';
+import iconVertex from '@/assets/icons/vertex.svg';
 import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
 import { useAuthFilesModels } from '@/features/authFiles/hooks/useAuthFilesModels';
 import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth';
 import { useAuthFilesPrefixProxyEditor } from '@/features/authFiles/hooks/useAuthFilesPrefixProxyEditor';
 import { useAuthFilesStats } from '@/features/authFiles/hooks/useAuthFilesStats';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
-import { readAuthFilesUiState, writeAuthFilesUiState } from '@/features/authFiles/uiState';
+import {
+  isAuthFilesSortMode,
+  readAuthFilesUiState,
+  writeAuthFilesUiState,
+  type AuthFilesSortMode,
+} from '@/features/authFiles/uiState';
 import { useAuthStore, useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
-import { ANTIGRAVITY_CONFIG, CLAUDE_CONFIG, CODEX_CONFIG, GEMINI_CLI_CONFIG, KIMI_CONFIG } from '@/components/quota';
+import {
+  ANTIGRAVITY_CONFIG,
+  CLAUDE_CONFIG,
+  CODEX_CONFIG,
+  GEMINI_CLI_CONFIG,
+  KIMI_CONFIG,
+} from '@/components/quota';
 import { getStatusFromError } from '@/utils/quota';
 import styles from './AuthFilesPage.module.scss';
 
@@ -57,6 +79,28 @@ const easePower3Out = (progress: number) => 1 - (1 - progress) ** 4;
 const easePower2In = (progress: number) => progress ** 3;
 const BATCH_BAR_BASE_TRANSFORM = 'translateX(-50%)';
 const BATCH_BAR_HIDDEN_TRANSFORM = 'translateX(-50%) translateY(56px)';
+const AUTH_FILE_FILTER_ICONS: Record<string, string | { light: string; dark: string }> = {
+  antigravity: iconAntigravity,
+  aistudio: iconGemini,
+  claude: iconClaude,
+  codex: iconCodex,
+  gemini: iconGemini,
+  'gemini-cli': iconGemini,
+  iflow: iconIflow,
+  kimi: { light: iconKimiLight, dark: iconKimiDark },
+  qwen: iconQwen,
+  vertex: iconVertex,
+};
+
+const getFilterTagIcon = (type: string, resolvedTheme: ResolvedTheme): string | null => {
+  const iconEntry = AUTH_FILE_FILTER_ICONS[normalizeProviderKey(type)];
+  if (!iconEntry) return null;
+  return typeof iconEntry === 'string'
+    ? iconEntry
+    : resolvedTheme === 'dark'
+      ? iconEntry.dark
+      : iconEntry.light;
+};
 
 export function AuthFilesPage() {
   const { t } = useTranslation();
@@ -76,6 +120,7 @@ export function AuthFilesPage() {
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<AuthFileItem | null>(null);
   const [viewMode, setViewMode] = useState<'diagram' | 'list'>('list');
+  const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');
   const [batchActionBarVisible, setBatchActionBarVisible] = useState(false);
   const floatingBatchActionsRef = useRef<HTMLDivElement>(null);
   const batchActionAnimationRef = useRef<AnimationPlaybackControlsWithThen | null>(null);
@@ -179,11 +224,14 @@ export function AuthFilesPage() {
     if (typeof persisted.pageSize === 'number' && Number.isFinite(persisted.pageSize)) {
       setPageSize(clampCardPageSize(persisted.pageSize));
     }
+    if (isAuthFilesSortMode(persisted.sortMode)) {
+      setSortMode(persisted.sortMode);
+    }
   }, []);
 
   useEffect(() => {
-    writeAuthFilesUiState({ filter, problemOnly, search, page, pageSize });
-  }, [filter, problemOnly, search, page, pageSize]);
+    writeAuthFilesUiState({ filter, problemOnly, search, page, pageSize, sortMode });
+  }, [filter, problemOnly, search, page, pageSize, sortMode]);
 
   useEffect(() => {
     setPageSizeInput(String(pageSize));
@@ -224,6 +272,16 @@ export function AuthFilesPage() {
     setPageSize(rounded);
     setPage(1);
   };
+
+  const handleSortModeChange = useCallback(
+    (value: string) => {
+      if (!isAuthFilesSortMode(value) || value === sortMode) return;
+      setSortMode(value);
+      setPage(1);
+      void loadFiles().catch(() => {});
+    },
+    [loadFiles, sortMode]
+  );
 
   const handleHeaderRefresh = useCallback(async () => {
     await Promise.all([loadFiles(), refreshKeyStats(), loadExcluded(), loadModelAlias()]);
@@ -312,6 +370,15 @@ export function AuthFilesPage() {
     [files, problemOnly]
   );
 
+  const sortOptions = useMemo(
+    () => [
+      { value: 'default', label: t('auth_files.sort_default') },
+      { value: 'az', label: t('auth_files.sort_az') },
+      { value: 'priority', label: t('auth_files.sort_priority') },
+    ],
+    [t]
+  );
+
   const typeCounts = useMemo(() => {
     const counts: Record<string, number> = { all: filesMatchingProblemFilter.length };
     filesMatchingProblemFilter.forEach((file) => {
@@ -334,10 +401,32 @@ export function AuthFilesPage() {
     });
   }, [filesMatchingProblemFilter, filter, search]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const sorted = useMemo(() => {
+    const copy = [...filtered];
+    if (sortMode === 'default') {
+      copy.sort((a, b) => {
+        const providerA = normalizeProviderKey(String(a.provider ?? a.type ?? 'unknown'));
+        const providerB = normalizeProviderKey(String(b.provider ?? b.type ?? 'unknown'));
+        const providerCompare = providerA.localeCompare(providerB);
+        if (providerCompare !== 0) return providerCompare;
+        return a.name.localeCompare(b.name);
+      });
+    } else if (sortMode === 'az') {
+      copy.sort((a, b) => a.name.localeCompare(b.name));
+    } else if (sortMode === 'priority') {
+      copy.sort((a, b) => {
+        const pa = parsePriorityValue(a.priority ?? a['priority']) ?? 0;
+        const pb = parsePriorityValue(b.priority ?? b['priority']) ?? 0;
+        return pb - pa; // 高优先级排前面
+      });
+    }
+    return copy;
+  }, [filtered, sortMode]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const start = (currentPage - 1) * pageSize;
-  const pageItems = filtered.slice(start, start + pageSize);
+  const pageItems = sorted.slice(start, start + pageSize);
   const selectablePageItems = useMemo(
     () => pageItems.filter((file) => !isRuntimeOnlyAuthFile(file)),
     [pageItems]
@@ -486,6 +575,7 @@ export function AuthFilesPage() {
     <div className={styles.filterTags}>
       {existingTypes.map((type) => {
         const isActive = filter === type;
+        const iconSrc = getFilterTagIcon(type, resolvedTheme);
         const color =
           type === 'all'
             ? { bg: 'var(--bg-tertiary)', text: 'var(--text-primary)' }
@@ -505,7 +595,10 @@ export function AuthFilesPage() {
               setPage(1);
             }}
           >
-            <span className={styles.filterTagLabel}>{getTypeLabel(t, type)}</span>
+            <span className={styles.filterTagLabel}>
+              {iconSrc && <img src={iconSrc} alt="" className={styles.filterTagIcon} />}
+              <span>{getTypeLabel(t, type)}</span>
+            </span>
             <span className={styles.filterTagCount}>{typeCounts[type] ?? 0}</span>
           </button>
         );
@@ -612,6 +705,17 @@ export function AuthFilesPage() {
                 }}
               />
             </div>
+            <div className={styles.filterItem}>
+              <label>{t('auth_files.sort_label')}</label>
+              <Select
+                className={styles.sortSelect}
+                value={sortMode}
+                options={sortOptions}
+                onChange={handleSortModeChange}
+                ariaLabel={t('auth_files.sort_label')}
+                fullWidth={false}
+              />
+            </div>
             <div className={`${styles.filterItem} ${styles.filterToggleItem}`}>
               <label>{t('auth_files.problem_filter_label')}</label>
               <div className={styles.filterToggle}>
@@ -669,7 +773,7 @@ export function AuthFilesPage() {
           </div>
         )}
 
-        {!loading && filtered.length > pageSize && (
+        {!loading && sorted.length > pageSize && (
           <div className={styles.pagination}>
             <Button
               variant="secondary"
@@ -683,7 +787,7 @@ export function AuthFilesPage() {
               {t('auth_files.pagination_info', {
                 current: currentPage,
                 total: totalPages,
-                count: filtered.length,
+                count: sorted.length,
               })}
             </div>
             <Button

@@ -18,7 +18,8 @@ export type PrefixProxyEditorField =
   | 'priority'
   | 'excludedModelsText'
   | 'disableCooling'
-  | 'websocket';
+  | 'websocket'
+  | 'note';
 
 export type PrefixProxyEditorFieldValue = string | boolean;
 
@@ -37,6 +38,8 @@ export type PrefixProxyEditorState = {
   excludedModelsText: string;
   disableCooling: string;
   websocket: boolean;
+  note: string;
+  noteTouched: boolean;
 };
 
 export type UseAuthFilesPrefixProxyEditorOptions = {
@@ -93,6 +96,15 @@ const buildPrefixProxyUpdatedText = (editor: PrefixProxyEditorState | null): str
     next.websocket = editor.websocket;
   }
 
+  if (editor.noteTouched) {
+    const noteValue = editor.note.trim();
+    if (noteValue) {
+      next.note = editor.note;
+    } else if ('note' in next) {
+      delete next.note;
+    }
+  }
+
   return JSON.stringify(next);
 };
 
@@ -146,6 +158,8 @@ export function useAuthFilesPrefixProxyEditor(
       excludedModelsText: '',
       disableCooling: '',
       websocket: false,
+      note: '',
+      noteTouched: false,
     });
 
     try {
@@ -195,6 +209,7 @@ export function useAuthFilesPrefixProxyEditor(
       const excludedModels = normalizeExcludedModels(json.excluded_models);
       const disableCoolingValue = parseDisableCoolingValue(json.disable_cooling);
       const websocketValue = parseDisableCoolingValue(json.websocket);
+      const note = typeof json.note === 'string' ? json.note : '';
 
       setPrefixProxyEditor((prev) => {
         if (!prev || prev.fileName !== name) return prev;
@@ -211,6 +226,8 @@ export function useAuthFilesPrefixProxyEditor(
           disableCooling:
             disableCoolingValue === undefined ? '' : disableCoolingValue ? 'true' : 'false',
           websocket: websocketValue ?? false,
+          note,
+          noteTouched: false,
           error: null,
         };
       });
@@ -235,6 +252,7 @@ export function useAuthFilesPrefixProxyEditor(
       if (field === 'priority') return { ...prev, priority: String(value) };
       if (field === 'excludedModelsText') return { ...prev, excludedModelsText: String(value) };
       if (field === 'disableCooling') return { ...prev, disableCooling: String(value) };
+      if (field === 'note') return { ...prev, note: String(value), noteTouched: true };
       return { ...prev, websocket: Boolean(value) };
     });
   };
