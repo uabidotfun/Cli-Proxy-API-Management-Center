@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
@@ -177,8 +178,11 @@ export function VisualConfigEditor({
   onChange,
 }: VisualConfigEditorProps) {
   const { t } = useTranslation();
+  const pageTransitionLayer = usePageTransitionLayer();
+  const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.status === 'current' : true;
   const isMobile = useMediaQuery('(max-width: 768px)');
   const isFloatingSidebar = useMediaQuery('(min-width: 1025px)');
+  const shouldRenderFloatingSidebar = !isMobile && isFloatingSidebar && isCurrentLayer;
   const routingStrategyLabelId = useId();
   const routingStrategyHintId = `${routingStrategyLabelId}-hint`;
   const keepaliveInputId = useId();
@@ -192,6 +196,10 @@ export function VisualConfigEditor({
   const sidebarAnchorRef = useRef<HTMLElement | null>(null);
   const floatingSidebarRef = useRef<HTMLDivElement | null>(null);
   const sectionRefs = useRef<Partial<Record<VisualSectionId, HTMLElement | null>>>({});
+  const mobileNavScrollerRef = useRef<HTMLDivElement | null>(null);
+  const mobileNavButtonRefs = useRef<Partial<Record<VisualSectionId, HTMLButtonElement | null>>>(
+    {}
+  );
 
   const isKeepaliveDisabled =
     values.streaming.keepaliveSeconds === '' || values.streaming.keepaliveSeconds === '0';
@@ -351,6 +359,27 @@ export function VisualConfigEditor({
     return () => observer.disconnect();
   }, [sections]);
 
+  useEffect(() => {
+    if (!isMobile) return;
+    const scroller = mobileNavScrollerRef.current;
+    const button = mobileNavButtonRefs.current[activeSectionId];
+    if (!scroller || !button) return;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    const centeredLeft =
+      scroller.scrollLeft +
+      (buttonRect.left - scrollerRect.left) -
+      (scroller.clientWidth - buttonRect.width) / 2;
+    const maxScrollLeft = Math.max(scroller.scrollWidth - scroller.clientWidth, 0);
+    const targetLeft = Math.min(Math.max(centeredLeft, 0), maxScrollLeft);
+
+    scroller.scrollTo({
+      left: targetLeft,
+      behavior: 'smooth',
+    });
+  }, [activeSectionId, isMobile]);
+
   const handleSectionJump = useCallback((sectionId: VisualSectionId) => {
     setActiveSectionId(sectionId);
     sectionRefs.current[sectionId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -363,20 +392,20 @@ export function VisualConfigEditor({
     if (!floatingElement) return undefined;
 
     const clearFloatingStyles = () => {
-      floatingElement.style.removeProperty('--visual-config-floating-left');
-      floatingElement.style.removeProperty('--visual-config-floating-top');
-      floatingElement.style.removeProperty('--visual-config-floating-width');
-      floatingElement.style.removeProperty('--visual-config-floating-max-height');
+      floatingElement.style.removeProperty('transform');
+      floatingElement.style.removeProperty('width');
+      floatingElement.style.removeProperty('max-height');
       floatingElement.style.removeProperty('opacity');
       floatingElement.style.removeProperty('pointer-events');
     };
 
-    if (isMobile || !isFloatingSidebar || !anchorElement || !workspaceElement) {
+    if (!shouldRenderFloatingSidebar || !anchorElement || !workspaceElement) {
       clearFloatingStyles();
       return undefined;
     }
 
-    const getHeaderHeight = () => {
+    /* ---- Cache header height – recomputed only on resize ---- */
+    const computeHeaderHeight = () => {
       const header = document.querySelector('.main-header') as HTMLElement | null;
       if (header) return header.getBoundingClientRect().height;
 
@@ -384,8 +413,14 @@ export function VisualConfigEditor({
       const parsed = Number.parseFloat(raw);
       return Number.isFinite(parsed) ? parsed : 64;
     };
+    let headerHeight = computeHeaderHeight();
 
-    const getContentScroller = () => document.querySelector('.content') as HTMLElement | null;
+    /* ---- Cache content scroller – resolved once ---- */
+    const contentScroller = document.querySelector('.content') as HTMLElement | null;
+
+    /* ---- Cache floating height from previous frame ---- */
+    let cachedFloatingHeight = floatingElement.getBoundingClientRect().height || 200;
+
     let frameId = 0;
 
     const updateFloatingPosition = () => {
@@ -393,10 +428,9 @@ export function VisualConfigEditor({
 
       const anchorRect = anchorElement.getBoundingClientRect();
       const workspaceRect = workspaceElement.getBoundingClientRect();
-      const floatingHeight = floatingElement.getBoundingClientRect().height;
-      const stickyTop = getHeaderHeight() + 20;
+      const stickyTop = headerHeight + 20;
       const viewportPadding = 16;
-      const maxTop = workspaceRect.bottom - floatingHeight;
+      const maxTop = workspaceRect.bottom - cachedFloatingHeight;
       const unclampedTop = Math.min(Math.max(anchorRect.top, stickyTop), maxTop);
       const top = Math.max(unclampedTop, viewportPadding);
       const left = Math.max(anchorRect.left, viewportPadding);
@@ -407,10 +441,9 @@ export function VisualConfigEditor({
       const maxHeight = Math.max(window.innerHeight - top - viewportPadding, 160);
       const isVisible = workspaceRect.bottom > stickyTop + 24 && anchorRect.top < window.innerHeight;
 
-      floatingElement.style.setProperty('--visual-config-floating-left', `${left}px`);
-      floatingElement.style.setProperty('--visual-config-floating-top', `${top}px`);
-      floatingElement.style.setProperty('--visual-config-floating-width', `${width}px`);
-      floatingElement.style.setProperty('--visual-config-floating-max-height', `${maxHeight}px`);
+      floatingElement.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+      floatingElement.style.width = `${width}px`;
+      floatingElement.style.maxHeight = `${maxHeight}px`;
       floatingElement.style.opacity = isVisible ? '1' : '0';
       floatingElement.style.pointerEvents = isVisible ? 'auto' : 'none';
     };
@@ -420,10 +453,15 @@ export function VisualConfigEditor({
       frameId = requestAnimationFrame(updateFloatingPosition);
     };
 
+    const handleResize = () => {
+      headerHeight = computeHeaderHeight();
+      cachedFloatingHeight = floatingElement.getBoundingClientRect().height || cachedFloatingHeight;
+      requestPositionUpdate();
+    };
+
     requestPositionUpdate();
 
-    const contentScroller = getContentScroller();
-    window.addEventListener('resize', requestPositionUpdate);
+    window.addEventListener('resize', handleResize);
     window.addEventListener('scroll', requestPositionUpdate, { passive: true });
     contentScroller?.addEventListener('scroll', requestPositionUpdate, { passive: true });
 
@@ -431,17 +469,16 @@ export function VisualConfigEditor({
       typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(requestPositionUpdate);
     resizeObserver?.observe(anchorElement);
     resizeObserver?.observe(workspaceElement);
-    resizeObserver?.observe(floatingElement);
 
     return () => {
       if (frameId) cancelAnimationFrame(frameId);
       resizeObserver?.disconnect();
-      window.removeEventListener('resize', requestPositionUpdate);
+      window.removeEventListener('resize', handleResize);
       window.removeEventListener('scroll', requestPositionUpdate);
       contentScroller?.removeEventListener('scroll', requestPositionUpdate);
       clearFloatingStyles();
     };
-  }, [isFloatingSidebar, isMobile]);
+  }, [shouldRenderFloatingSidebar]);
 
   const navContent = (
     <div className={styles.navList}>
@@ -528,6 +565,40 @@ export function VisualConfigEditor({
       </div>
 
       <div ref={workspaceRef} className={styles.workspace}>
+        {isMobile ? (
+          <div className={styles.mobileSectionNav}>
+            <div
+              ref={mobileNavScrollerRef}
+              className={styles.mobileSectionNavScroller}
+              aria-label={t('config_management.visual.quick_jump', { defaultValue: '快速跳转' })}
+            >
+              {sections.map((section, index) => (
+                <button
+                  key={section.id}
+                  ref={(node) => {
+                    mobileNavButtonRefs.current[section.id] = node;
+                  }}
+                  type="button"
+                  className={`${styles.mobileSectionNavButton} ${
+                    activeSectionId === section.id ? styles.mobileSectionNavButtonActive : ''
+                  }`}
+                  onClick={() => handleSectionJump(section.id)}
+                >
+                  <span className={styles.mobileSectionNavIndex}>
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  <span className={styles.mobileSectionNavLabel}>{section.title}</span>
+                  {section.errorCount > 0 ? (
+                    <span className={styles.mobileSectionNavBadge} aria-hidden="true">
+                      {section.errorCount}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <aside ref={sidebarAnchorRef} className={styles.sidebar}>
           {isFloatingSidebar ? (
             <div className={styles.sidebarPlaceholder} aria-hidden="true" />
@@ -1042,7 +1113,7 @@ export function VisualConfigEditor({
         </div>
       </div>
 
-      {!isMobile && isFloatingSidebar && typeof document !== 'undefined'
+      {shouldRenderFloatingSidebar && typeof document !== 'undefined'
         ? createPortal(
             <div ref={floatingSidebarRef} className={styles.floatingSidebarContainer}>
               <div className={styles.floatingSidebarRail}>{navContent}</div>
