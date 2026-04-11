@@ -49,7 +49,7 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
 
   const { tokenBreakdown, rateStats, totalCost } = useMemo(() => {
     const empty = {
-      tokenBreakdown: { cachedTokens: 0, reasoningTokens: 0 },
+      tokenBreakdown: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, reasoningTokens: 0 },
       rateStats: { rpm: 0, tpm: 0, windowMinutes: 30, requestCount: 0, tokenCount: 0 },
       totalCost: 0
     };
@@ -58,6 +58,9 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
     const details = collectUsageDetails(usage);
     if (!details.length) return empty;
 
+    // 直接基于请求明细累加各类 Token，保证卡片细分统计与明细表/分布图使用同一口径。
+    let inputTokens = 0;
+    let outputTokens = 0;
     let cachedTokens = 0;
     let reasoningTokens = 0;
     let totalCost = 0;
@@ -71,6 +74,8 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
 
     details.forEach((detail) => {
       const tokens = detail.tokens;
+      inputTokens += typeof tokens.input_tokens === 'number' ? Math.max(tokens.input_tokens, 0) : 0;
+      outputTokens += typeof tokens.output_tokens === 'number' ? Math.max(tokens.output_tokens, 0) : 0;
       cachedTokens += Math.max(
         typeof tokens.cached_tokens === 'number' ? Math.max(tokens.cached_tokens, 0) : 0,
         typeof tokens.cache_tokens === 'number' ? Math.max(tokens.cache_tokens, 0) : 0
@@ -92,7 +97,7 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
 
     const denominator = windowMinutes > 0 ? windowMinutes : 1;
     return {
-      tokenBreakdown: { cachedTokens, reasoningTokens },
+      tokenBreakdown: { inputTokens, outputTokens, cachedTokens, reasoningTokens },
       rateStats: {
         rpm: requestCount / denominator,
         tpm: tokenCount / denominator,
@@ -137,6 +142,12 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       value: loading ? '-' : formatCompactNumber(usage?.total_tokens ?? 0),
       meta: (
         <>
+          <span className={styles.statMetaItem}>
+            {t('usage_stats.input_tokens')}: {loading ? '-' : formatCompactNumber(tokenBreakdown.inputTokens)}
+          </span>
+          <span className={styles.statMetaItem}>
+            {t('usage_stats.output_tokens')}: {loading ? '-' : formatCompactNumber(tokenBreakdown.outputTokens)}
+          </span>
           <span className={styles.statMetaItem}>
             {t('usage_stats.cached_tokens')}: {loading ? '-' : formatCompactNumber(tokenBreakdown.cachedTokens)}
           </span>
